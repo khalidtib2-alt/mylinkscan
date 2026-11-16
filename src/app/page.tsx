@@ -71,8 +71,9 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     const destination = params.get("url");
     const scan = params.get("scan");
-    if (destination !== null || scan === "url" || scan === "file") {
-      setTab(destination === null && scan === "file" ? 1 : 0);
+    const requestedTab = params.get("tab");
+    if (destination !== null || requestedTab === "file" || requestedTab === "folder" || scan === "url" || scan === "file") {
+      setTab(destination !== null ? 0 : requestedTab === "folder" ? 2 : requestedTab === "file" || scan === "file" ? 1 : 0);
       document.getElementById("scanner")?.scrollIntoView();
     }
     if (destination !== null) {

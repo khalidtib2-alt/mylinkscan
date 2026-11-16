@@ -5,6 +5,11 @@ const status = document.querySelector("#status");
 const findings = document.querySelector("#findings");
 const liveReport = document.querySelector("#live-report");
 const openReport = document.querySelector("#full-report");
+for (const button of document.querySelectorAll("[data-tool-path]")) {
+  button.addEventListener("click", () => {
+    void chrome.tabs.create({ url: new URL(button.dataset.toolPath, serviceOrigin).href });
+  });
+}
 let activeScan;
 let inputChanged = false;
 

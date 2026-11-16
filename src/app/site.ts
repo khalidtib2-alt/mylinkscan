@@ -8,10 +8,12 @@ export const trustLinks = [
   { href: "/privacy-policy", label: "Privacy Policy" },
   { href: "/terms", label: "Terms" },
   { href: "/extension", label: "Chrome Extension" },
+  { href: "/bot-shield", label: "Bot Shield" },
 ];
 
 export const scannerLinks = [
   { href: "/?scan=url", label: "URL Scanner" },
   { href: "/?scan=file", label: "File & Folder Scan" },
   { href: "/extension", label: "Chrome Extension" },
+  { href: "/bot-shield", label: "Bot Shield" },
 ];
