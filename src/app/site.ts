@@ -16,4 +16,5 @@ export const scannerLinks = [
   { href: "/?scan=file", label: "File & Folder Scan" },
   { href: "/extension", label: "Chrome Extension" },
   { href: "/bot-shield", label: "Bot Shield" },
+  { href: "/shield-links", label: "Shield Links" },
 ];

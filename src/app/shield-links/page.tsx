@@ -74,17 +74,7 @@ export default function ShieldLinksPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 px-4 py-4">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4">
-          <Link href="/" className="font-bold text-emerald-400">MyLinkscan</Link>
-          <nav className="flex flex-wrap gap-4 text-sm text-slate-300">
-            <Link href="/" className="hover:text-emerald-400">Scanner</Link>
-            <Link href="/bot-shield" className="hover:text-emerald-400">Bot Shield</Link>
-            <Link href="/shield-links" className="font-semibold text-emerald-400">Shield Links</Link>
-            <Link href="/extension" className="hover:text-emerald-400">Extension</Link>
-          </nav>
-        </div>
-      </header>
+      
 
       <main className="mx-auto max-w-3xl px-4 py-10">
         <h1 className="text-center text-3xl font-extrabold text-white">Protected Shield Links</h1>
