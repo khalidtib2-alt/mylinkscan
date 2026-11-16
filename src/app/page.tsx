@@ -12,7 +12,7 @@ const tabs = [
 ];
 
 const features = [
-  { id: "links", title: "Instant Link Threat Check", description: "See instant phishing heuristics, then check DNS, TLS, redirects, and recent URLhaus listings.", icon: ScanLine },
+  { id: "links", title: "Instant Link Threat Check", description: "See instant phishing heuristics, then check DNS, TLS, redirects, and URLhaus listings.", icon: ScanLine },
   { id: "files", title: "Local File & Folder Inspection", description: "Fingerprint files with SHA-256 and look for executable headers or script markers directly in your browser.", icon: FolderOpen },
   { id: "extension", title: "Free Chrome Extension", description: "The Chrome extension is not available yet. You can check links here in the meantime.", icon: Puzzle },
 ];
@@ -121,7 +121,7 @@ export default function Home() {
                     }} required /></div>
                     <button type="submit" className="primary" disabled={checking}>Scan Now <ArrowRight size={17} /></button>
                   </div>
-                  <p className="hint">Scan Now sends the URL to MyLinkscan for live checks. Leave out links containing passwords, private tokens, or personal information.</p>
+                  <p className="hint">Scan Now sends the URL to MyLinkscan for live checks and may share it with URLhaus. Leave out links containing passwords, private tokens, or personal information.</p>
                   <div aria-live="polite">
                     {checking && <p className="hint">Checking DNS, redirects, TLS, and the threat feed…</p>}
                     {urlError && <p className="result text-amber-300">{urlError}</p>}
@@ -144,7 +144,7 @@ export default function Home() {
                         </li>)}
                       </ol> : <p className="hint">No destinations were contacted.</p>}
                       <p><strong>URLhaus Threat Feed:</strong> {report.feed}</p>
-                      {report.feed === "Hostname match" && <p className="hint">A different URL on this hostname appears in the recent feed.</p>}
+                      {report.feed === "Unavailable" && <p className="hint">The verdict reflects the other checks. URLhaus could not confirm a match.</p>}
                       <h3 className="font-semibold">Heuristic Findings</h3>
                       {[...new Set([...(urlResult?.warnings ?? []), ...report.findings])].length
                         ? <ul className="list-disc pl-5 text-amber-300">{[...new Set([...(urlResult?.warnings ?? []), ...report.findings])].map((warning) => <li key={warning}>{warning}</li>)}</ul>

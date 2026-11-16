@@ -7,7 +7,7 @@ export default function HowItWorksPage() {
   return (
     <SitePage title="How MyLinkscan Works" intro="File and folder scans stay on your device. Submitting a URL adds live checks from our server.">
       <h2>URL checks</h2>
-      <p>Your browser parses the URL without opening it and flags signals such as plain HTTP, IP-based URLs, long links, and names that resemble common brands. Our server resolves public addresses, checks TLS, and follows up to five redirects using HTTP headers. When available, it compares the submitted URL and observed destinations against a recent URLhaus malware list. These checks can miss harmful links, and legitimate links can trigger warnings.</p>
+      <p>Your browser parses the URL without opening it and flags signals such as plain HTTP, IP-based URLs, long links, and names that resemble common brands. Our server resolves public addresses, checks TLS, and follows up to five redirects using HTTP headers. When available, it queries URLhaus for exact matches on the submitted URL and public redirect destinations. These checks can miss harmful links, and legitimate links can trigger warnings.</p>
       <h2>SHA-256 fingerprints</h2>
       <p>Your browser reads the selected file and computes its SHA-256 fingerprint using the Web Crypto API. You can compare the fingerprint against a checksum published by a trusted source for the exact same download. The scanner hashes files up to 128 MB on HTTPS or localhost. Larger files still get a header check.</p>
       <h2>File headers and spoofed extensions</h2>

@@ -106,62 +106,34 @@ function requestHeaders(url: URL, target: { address: string; family: number }, m
   });
 }
 
-type FeedIndex = { urls: Set<string>; hosts: Set<string> };
-let feedCache: { index: FeedIndex | null; until: number } | undefined;
-let feedRefresh: Promise<FeedIndex | null> | undefined;
-
-async function fetchFeed(): Promise<FeedIndex | null> {
-  const key = process.env.URLHAUS_AUTH_KEY;
-  if (!key) return null;
-  const response = await fetch("https://urlhaus-api.abuse.ch/v2/files/exports/" + encodeURIComponent(key) + "/urls_recent.txt", {
-    cache: "no-store", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
-    headers: { "User-Agent": "MyLinkscan-Bot/1.0" },
-  });
-  if (!response.ok || !response.body) {
-    await response.body?.cancel();
-    return null;
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
+async function queryUrlhaus(url: string, signal: AbortSignal): Promise<UrlReport["feed"]> {
+  const key = process.env.URLHAUS_AUTH_KEY?.trim();
+  if (!key || signal.aborted) return "Unavailable";
   try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      size += chunk.value.byteLength;
-      if (size > 8 * 1024 * 1024) return null;
-      text += decoder.decode(chunk.value, { stream: true });
+    const response = await fetch("https://urlhaus-api.abuse.ch/v1/url/", {
+      method: "POST",
+      headers: { "Auth-Key": key, "User-Agent": "MyLinkscan-Bot/1.0" },
+      body: new URLSearchParams({ url }),
+      cache: "no-store",
+      redirect: "error",
+      signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      return "Unavailable";
     }
-    text += decoder.decode();
-  } finally {
-    await reader.cancel();
+    const result = await response.json();
+    if (result?.query_status === "ok") return "URL match";
+    if (result?.query_status === "no_results") return "No match";
+  } catch {
+    // URLhaus is an independent check. A failed query does not change the live scan findings.
   }
-  const index: FeedIndex = { urls: new Set(), hosts: new Set() };
-  for (const line of text.split("\n")) {
-    if (!/^https?:\/\//i.test(line.trim())) continue;
-    try {
-      const url = new URL(line.trim());
-      url.hash = "";
-      index.urls.add(url.href);
-      index.hosts.add(hostname(url));
-    } catch { /* Skip malformed feed entries. */ }
-  }
-  return index.urls.size ? index : null;
-}
-
-function getFeed() {
-  if (feedCache && feedCache.until > Date.now()) return Promise.resolve(feedCache.index);
-  return feedRefresh ??= fetchFeed().catch(() => null).then((index) => {
-    feedCache = { index, until: Date.now() + (index ? 15 * 60_000 : 60_000) };
-    feedRefresh = undefined;
-    return index;
-  });
+  return "Unavailable";
 }
 
 async function inspect(initial: URL): Promise<UrlReport> {
   const signal = AbortSignal.timeout(timeoutMs);
-  const indexPromise = getFeed();
+  const threatChecks: Promise<UrlReport["feed"]>[] = [];
   const hops: UrlHop[] = [];
   const visited = new Set<string>();
   const findings = new Set<string>();
@@ -179,6 +151,7 @@ async function inspect(initial: URL): Promise<UrlReport> {
       hops.push(hop);
       const addresses = await resolvePublic(url, signal);
       hop.addresses = addresses.map(({ address }) => address);
+      threatChecks.push(queryUrlhaus(url.href, signal));
       let response = await requestHeaders(url, addresses[0], "HEAD", signal);
       if (url.protocol === "https:") hop.https = "Verified TLS";
       if ([405, 501].includes(response.status)) response = await requestHeaders(url, addresses[0], "GET", signal);
@@ -204,11 +177,11 @@ async function inspect(initial: URL): Promise<UrlReport> {
       blocked || (error instanceof Error && !code) ? (error as Error).message :
       "Could not complete the HTTP or TLS connection.";
   }
-  const index = await indexPromise;
-  const feed = !index ? "Unavailable" : hops.some((hop) => index.urls.has(hop.url)) ? "URL match" :
-    hops.some((hop) => index.hosts.has(hostname(new URL(hop.url)))) ? "Hostname match" : "No match";
+  const threatResults = await Promise.all(threatChecks);
+  const feed = threatResults.includes("URL match") ? "URL match" :
+    threatResults.length && threatResults.every((result) => result === "No match") ? "No match" : "Unavailable";
   const verdict = blocked || feed === "URL match" ? "High Risk" :
-    issue || feed !== "No match" || findings.size ? "Caution" : "Safe";
+    issue || findings.size ? "Caution" : "Safe";
   return { verdict, finalUrl, hops, findings: [...findings], feed, issue };
 }
 

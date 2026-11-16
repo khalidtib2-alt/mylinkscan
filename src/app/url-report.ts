@@ -10,7 +10,7 @@ export type UrlReport = {
   verdict: "Safe" | "Caution" | "High Risk";
   finalUrl: string | null;
   hops: UrlHop[];
-  feed: "URL match" | "Hostname match" | "No match" | "Unavailable";
+  feed: "URL match" | "No match" | "Unavailable";
   findings: string[];
   issue?: string;
 };
