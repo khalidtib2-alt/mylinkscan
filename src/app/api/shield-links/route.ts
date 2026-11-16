@@ -91,7 +91,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Shield Link not found." }, { status: 404 });
   }
 
-  const row = rows;
+  const row = rows.at(0);
+
+
   return NextResponse.json({
     slug: row.slug,
     shieldUrl: req.nextUrl.origin + "/go/" + row.slug,
