@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, FileSearch, FolderOpen, Link2, LockKeyhole, Puzzle, ScanLine, ShieldCheck, UploadCloud } from "lucide-react";
 import { scanFile, scanUrl, type FileResult } from "./checks";
 
@@ -27,6 +27,14 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
 
+  useEffect(() => {
+    const scan = new URLSearchParams(window.location.search).get("scan");
+    if (scan === "url" || scan === "file") {
+      setTab(scan === "file" ? 1 : 0);
+      document.getElementById("scanner")?.scrollIntoView();
+    }
+  }, []);
+
   async function inspect(selection: File[]) {
     if (!selection.length || busy) return;
     setFileTab(tab);
@@ -46,18 +54,6 @@ export default function Home() {
   }
 
   return (
-    <>
-      <header className="site-header">
-        <div className="nav-wrap">
-          <a className="brand" href="#" aria-label="MyLinkscan home"><span className="brand-icon"><ShieldCheck size={24} /></span>MyLinkscan</a>
-          <nav aria-label="Main navigation">
-            <a href="#scanner" onClick={() => setTab(0)}>URL Scanner</a>
-            <a href="#scanner" onClick={() => setTab(1)}>File &amp; Folder Scan</a>
-            <a href="#extension">Chrome Extension</a>
-            <a href="#how-it-works">How It Works</a>
-          </nav>
-        </div>
-      </header>
       <main>
         <section className="hero mx-auto max-w-5xl px-5 text-center">
           <span className="hero-icon"><ShieldCheck size={32} strokeWidth={1.7} /></span>
@@ -127,6 +123,5 @@ export default function Home() {
         </section>
         <p className="scope mx-auto max-w-5xl px-5">Results are heuristic signals. This tool does not perform antivirus checks, look up reputation, or inspect archive contents.</p>
       </main>
-    </>
   );
 }
