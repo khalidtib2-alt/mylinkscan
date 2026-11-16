@@ -6,7 +6,7 @@ import { scannerLinks, siteUrl, trustLinks } from "./site";
 import "./globals.css";
 
 const title = "MyLinkscan — Scan Links, Files & Folders Before You Open Them";
-const description = "100% private local analysis for links, files, and folders. Your files never leave your device.";
+const description = "Check links with live DNS, TLS, redirects, and threat intelligence. Inspect files and folders locally on your device.";
 
 export const metadata: Metadata = {
   metadataBase: siteUrl,

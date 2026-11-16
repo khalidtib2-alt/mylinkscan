@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, FileSearch, FolderOpen, Link2, LockKeyhole, Puzzle, ScanLine, ShieldCheck, UploadCloud } from "lucide-react";
 import { scanFile, scanUrl, type FileResult } from "./checks";
+import type { UrlReport } from "./url-report";
 
 const tabs = [
   { label: "URL Scanner", icon: Link2 },
@@ -11,7 +12,7 @@ const tabs = [
 ];
 
 const features = [
-  { id: "links", title: "Instant Link Threat Check", description: "Check a URL for common phishing signals, suspicious domains, and unencrypted connections without visiting it.", icon: ScanLine },
+  { id: "links", title: "Instant Link Threat Check", description: "See instant phishing heuristics, then check DNS, TLS, redirects, and recent URLhaus listings.", icon: ScanLine },
   { id: "files", title: "Local File & Folder Inspection", description: "Fingerprint files with SHA-256 and look for executable headers or script markers directly in your browser.", icon: FolderOpen },
   { id: "extension", title: "Free Chrome Extension", description: "The Chrome extension is not available yet. You can check links here in the meantime.", icon: Puzzle },
 ];
@@ -21,6 +22,9 @@ export default function Home() {
   const [url, setUrl] = useState("");
   const [urlResult, setUrlResult] = useState<ReturnType<typeof scanUrl>>();
   const [urlError, setUrlError] = useState("");
+  const [report, setReport] = useState<UrlReport>();
+  const [checking, setChecking] = useState(false);
+  const currentScan = useRef<AbortController | null>(null);
   const [files, setFiles] = useState<FileResult[]>([]);
   const [fileTab, setFileTab] = useState(1);
   const [total, setTotal] = useState(0);
@@ -34,6 +38,40 @@ export default function Home() {
       document.getElementById("scanner")?.scrollIntoView();
     }
   }, []);
+
+  async function inspectUrl() {
+    currentScan.current?.abort();
+    const controller = new AbortController();
+    currentScan.current = controller;
+    setUrlResult(undefined);
+    setReport(undefined);
+    setUrlError("");
+    try {
+      setUrlResult(scanUrl(url));
+    } catch (error) {
+      setChecking(false);
+      setUrlError(error instanceof TypeError ? "Enter a valid HTTP or HTTPS URL." : (error as Error).message);
+      return;
+    }
+    setChecking(true);
+    try {
+      const response = await fetch("/api/scan-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+        signal: controller.signal,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
+      if (!controller.signal.aborted) setReport(result as UrlReport);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setUrlError(error instanceof Error && error.name === "Error" ? error.message : "Live checks are unavailable. Local findings are shown below.");
+      }
+    } finally {
+      if (!controller.signal.aborted) setChecking(false);
+    }
+  }
 
   async function inspect(selection: File[]) {
     if (!selection.length || busy) return;
@@ -58,7 +96,7 @@ export default function Home() {
         <section className="hero mx-auto max-w-5xl px-5 text-center">
           <span className="hero-icon"><ShieldCheck size={32} strokeWidth={1.7} /></span>
           <h1>Scan Links, Files &amp; Folders <span>Before You Open Them</span></h1>
-          <p className="subtitle">100% Private Local Analysis — Your Files Never Leave Your Device</p>
+          <p className="subtitle">Live Link Checks. Your Files and Folders Never Leave Your Device.</p>
           <section id="scanner" className="scanner mx-auto text-left" aria-label="Scanner">
             <div className="tabs" role="group" aria-label="Scan type">
               {tabs.map(({ label, icon: Icon }, index) => (
@@ -69,24 +107,49 @@ export default function Home() {
               {tab === 0 ? (
                 <form onSubmit={(event) => {
                   event.preventDefault();
-                  setUrlResult(undefined);
-                  setUrlError("");
-                  try { setUrlResult(scanUrl(url)); }
-                  catch (error) { setUrlError(error instanceof TypeError ? "Enter a valid HTTP or HTTPS URL." : (error as Error).message); }
+                  void inspectUrl();
                 }}>
                   <label className="input-label" htmlFor="scan-url">URL to inspect</label>
                   <div className="url-row">
-                    <div className="url-box"><Link2 size={19} /><input id="scan-url" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="https://example.com" value={url} onChange={(event) => { setUrl(event.target.value); setUrlResult(undefined); setUrlError(""); }} required /></div>
-                    <button type="submit" className="primary">Scan Now <ArrowRight size={17} /></button>
+                    <div className="url-box"><Link2 size={19} /><input id="scan-url" type="text" inputMode="url" autoComplete="off" spellCheck={false} placeholder="https://example.com" value={url} maxLength={2048} onChange={(event) => {
+                      currentScan.current?.abort();
+                      setUrl(event.target.value);
+                      setUrlResult(undefined);
+                      setUrlError("");
+                      setReport(undefined);
+                      setChecking(false);
+                    }} required /></div>
+                    <button type="submit" className="primary" disabled={checking}>Scan Now <ArrowRight size={17} /></button>
                   </div>
-                  <p className="hint">Paste a link to check its structure. The scanner never opens the URL.</p>
+                  <p className="hint">Scan Now sends the URL to MyLinkscan for live checks. Leave out links containing passwords, private tokens, or personal information.</p>
                   <div aria-live="polite">
+                    {checking && <p className="hint">Checking DNS, redirects, TLS, and the threat feed…</p>}
                     {urlError && <p className="result text-amber-300">{urlError}</p>}
-                    {urlResult && <div className="result">
+                    {urlResult && !report && <div className="result">
                       <strong className="break-all">{urlResult.host}</strong>
                       {urlResult.assumedHttps && <p className="hint">HTTPS was assumed because no scheme was provided.</p>}
                       {urlResult.warnings.length ? <ul className="mt-2 list-disc pl-5 text-amber-300">{urlResult.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : <p className="mt-2 text-emerald-300">No configured URL signals found. This does not establish that the link is safe.</p>}
                     </div>}
+                    {report && <section aria-label="Security Report Card" className="result space-y-3">
+                      <h2 className="text-lg font-bold">Security Report Card</h2>
+                      <p><strong>Overall Risk Verdict:</strong> <span className={report.verdict === "High Risk" ? "text-red-300" : report.verdict === "Caution" ? "text-amber-300" : "text-emerald-300"}>{report.verdict}</span></p>
+                      <p className="hint">The verdict reflects the available checks. Even a Safe result cannot guarantee a link is safe.</p>
+                      {report.issue && <p className="text-amber-300">{report.issue}</p>}
+                      <p className="break-all"><strong>Final Destination URL:</strong> {report.finalUrl ?? "Not confirmed"}</p>
+                      <h3 className="font-semibold">Redirect Hops, DNS/IP &amp; HTTPS Status</h3>
+                      {report.hops.length ? <ol className="space-y-2">
+                        {report.hops.map((hop, index) => <li key={hop.url} className="break-all rounded-md border border-slate-700 p-2">
+                          <p>{index === 0 ? "Starting URL" : "Redirect " + index}: {hop.url}</p>
+                          <p className="hint">{hop.addresses.length ? "IP: " + hop.addresses.join(", ") : "No public IP verified"} · {hop.https}{hop.status ? " · HTTP " + hop.status : ""}</p>
+                        </li>)}
+                      </ol> : <p className="hint">No destinations were contacted.</p>}
+                      <p><strong>URLhaus Threat Feed:</strong> {report.feed}</p>
+                      {report.feed === "Hostname match" && <p className="hint">A different URL on this hostname appears in the recent feed.</p>}
+                      <h3 className="font-semibold">Heuristic Findings</h3>
+                      {[...new Set([...(urlResult?.warnings ?? []), ...report.findings])].length
+                        ? <ul className="list-disc pl-5 text-amber-300">{[...new Set([...(urlResult?.warnings ?? []), ...report.findings])].map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                        : <p className="hint">No configured URL signals found.</p>}
+                    </section>}
                   </div>
                 </form>
               ) : (
@@ -115,13 +178,13 @@ export default function Home() {
                 </>
               )}
             </div>
-            <div className="privacy"><LockKeyhole size={15} /> All scans run on this device. No uploads.</div>
+            <div className="privacy"><LockKeyhole size={15} /> {tab === 0 ? "Instant checks run locally. Live checks use the server." : "File and folder scans run on this device. No uploads."}</div>
           </section>
         </section>
         <section id="how-it-works" aria-label="How it works" className="features mx-auto max-w-5xl px-5">
           {features.map(({ id, title, description, icon: Icon }) => <article id={id} className="feature" key={id}><span className="feature-icon"><Icon size={21} /></span><h2>{title}</h2><p>{description}</p></article>)}
         </section>
-        <p className="scope mx-auto max-w-5xl px-5">Results are heuristic signals. This tool does not perform antivirus checks, look up reputation, or inspect archive contents.</p>
+        <p className="scope mx-auto max-w-5xl px-5">Results cover a limited set of checks. File scans do not perform antivirus checks or inspect archive contents.</p>
       </main>
   );
 }
