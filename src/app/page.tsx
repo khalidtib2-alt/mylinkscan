@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ArrowRight, FileSearch, FolderOpen, Link2, LockKeyhole, Puzzle, ScanLine, ShieldCheck, UploadCloud } from "lucide-react";
 import { scanFile, scanUrl, type FileResult } from "./checks";
 import type { UrlReport } from "./url-report";
@@ -14,7 +15,7 @@ const tabs = [
 const features = [
   { id: "links", title: "Instant Link Threat Check", description: "See instant phishing heuristics, then check DNS, TLS, redirects, and URLhaus listings.", icon: ScanLine },
   { id: "files", title: "Local File & Folder Inspection", description: "Fingerprint files with SHA-256 and look for executable headers or script markers directly in your browser.", icon: FolderOpen },
-  { id: "extension", title: "Free Chrome Extension", description: "The Chrome extension is not available yet. You can check links here in the meantime.", icon: Puzzle },
+  { id: "extension", title: "Free Chrome Extension", description: "Check your current tab or scan any web link from Chrome’s right-click menu.", icon: Puzzle, href: "/extension" },
 ];
 
 export default function Home() {
@@ -31,15 +32,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
 
-  useEffect(() => {
-    const scan = new URLSearchParams(window.location.search).get("scan");
-    if (scan === "url" || scan === "file") {
-      setTab(scan === "file" ? 1 : 0);
-      document.getElementById("scanner")?.scrollIntoView();
-    }
-  }, []);
-
-  async function inspectUrl() {
+  const inspectUrl = useCallback(async (value: string) => {
     currentScan.current?.abort();
     const controller = new AbortController();
     currentScan.current = controller;
@@ -47,7 +40,8 @@ export default function Home() {
     setReport(undefined);
     setUrlError("");
     try {
-      setUrlResult(scanUrl(url));
+      if (value.length > 2048) throw new Error("Enter a URL up to 2,048 characters.");
+      setUrlResult(scanUrl(value));
     } catch (error) {
       setChecking(false);
       setUrlError(error instanceof TypeError ? "Enter a valid HTTP or HTTPS URL." : (error as Error).message);
@@ -58,7 +52,7 @@ export default function Home() {
       const response = await fetch("/api/scan-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: value }),
         signal: controller.signal,
       });
       const result = await response.json();
@@ -71,7 +65,25 @@ export default function Home() {
     } finally {
       if (!controller.signal.aborted) setChecking(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const destination = params.get("url");
+    const scan = params.get("scan");
+    if (destination !== null || scan === "url" || scan === "file") {
+      setTab(destination === null && scan === "file" ? 1 : 0);
+      document.getElementById("scanner")?.scrollIntoView();
+    }
+    if (destination !== null) {
+      setUrl(destination);
+      const timer = window.setTimeout(() => void inspectUrl(destination), 0);
+      return () => {
+        window.clearTimeout(timer);
+        currentScan.current?.abort();
+      };
+    }
+  }, [inspectUrl]);
 
   async function inspect(selection: File[]) {
     if (!selection.length || busy) return;
@@ -107,7 +119,7 @@ export default function Home() {
               {tab === 0 ? (
                 <form onSubmit={(event) => {
                   event.preventDefault();
-                  void inspectUrl();
+                  void inspectUrl(url);
                 }}>
                   <label className="input-label" htmlFor="scan-url">URL to inspect</label>
                   <div className="url-row">
@@ -182,7 +194,11 @@ export default function Home() {
           </section>
         </section>
         <section id="how-it-works" aria-label="How it works" className="features mx-auto max-w-5xl px-5">
-          {features.map(({ id, title, description, icon: Icon }) => <article id={id} className="feature" key={id}><span className="feature-icon"><Icon size={21} /></span><h2>{title}</h2><p>{description}</p></article>)}
+          {features.map(({ id, title, description, icon: Icon, href }) => {
+            const content = <><span className="feature-icon"><Icon size={21} /></span><h2>{title}</h2><p>{description}</p></>;
+            return href ? <Link id={id} className="feature hover:border-emerald-400/60" key={id} href={href}>{content}</Link>
+              : <article id={id} className="feature" key={id}>{content}</article>;
+          })}
         </section>
         <p className="scope mx-auto max-w-5xl px-5">Results cover a limited set of checks. File scans do not perform antivirus checks or inspect archive contents.</p>
       </main>

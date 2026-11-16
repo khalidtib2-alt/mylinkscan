@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MyLinkscan</title>
+  <link rel="stylesheet" href="popup.css">
+  <script type="module" src="popup.js"></script>
+</head>
+<body>
+  <header><img src="icon48.png" alt="" width="32" height="32"><h1>MyLinkscan</h1></header>
+  <main>
+    <form id="scan-form">
+      <label for="url">URL to scan</label>
+      <input id="url" type="text" inputmode="url" spellcheck="false" autocomplete="off" maxlength="2048" placeholder="https://example.com" required>
+      <button class="primary" type="submit">Scan Now</button>
+    </form>
+    <p class="hint">Live checks send the URL to MyLinkscan and may share it with URLhaus. Leave out links with private tokens.</p>
+    <section class="panel" aria-labelledby="results-title">
+      <h2 id="results-title">Scan results</h2>
+      <p id="status" role="status" class="hint">Paste a link to get started.</p>
+      <ul id="findings" hidden></ul>
+      <dl id="live-report" hidden>
+        <dt>Final destination</dt><dd id="destination"></dd>
+        <dt>URLhaus</dt><dd id="feed"></dd>
+      </dl>
+    </section>
+    <button class="secondary" id="full-report" type="button" disabled>Open full report in a new tab</button>
+  </main>
+</body>
+</html>
