@@ -1,137 +1,102 @@
-"use client";
+import { NextRequest, NextResponse } from "next/server";
+import crypto from "node:crypto";
+import net from "node:net";
 
-import React, { useEffect, useState } from "react";
-import Link from "next/link";
+const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "metadata.google.internal"]);
 
-type ShieldItem = {
-  slug: string;
-  shieldUrl: string;
-  manageToken: string;
-  destinationUrl: string;
-  humanClicks: number;
-  blockedBots: number;
-};
+function isPrivateIp(ip: string): boolean {
+  const v = net.isIP(ip);
+  if (v === 4) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  if (v === 6) {
+    const l = ip.toLowerCase();
+    return l === "::1" || l === "::" || l.startsWith("fc") || l.startsWith("fd") || l.startsWith("fe80");
+  }
+  return false;
+}
 
-const KEY = "mylinkscan_shield_links_v1";
+function getConfig() {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  return url && key ? { url, key } : null;
+}
 
-export default function ShieldLinksPage() {
-  const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [items, setItems] = useState<ShieldItem[]>([]);
-  const [copied, setCopied] = useState("");
-  const [sIn, setSIn] = useState("");
-  const [tIn, setTIn] = useState("");
+export async function POST(req: NextRequest) {
+  const cfg = getConfig();
+  if (!cfg) return NextResponse.json({ error: "Server Supabase keys missing." }, { status: 500 });
 
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(KEY) || "[]");
-      if (Array.isArray(saved)) setItems(saved);
-    } catch {}
-  }, []);
+  const body = await req.json().catch(() => ({}));
+  const raw = String(body.destinationUrl || "").trim();
+  if (!raw) return NextResponse.json({ error: "Enter a destination URL." }, { status: 400 });
 
-  function save(next: ShieldItem[]) {
-    setItems(next);
-    try {
-      localStorage.setItem(KEY, JSON.stringify(next));
-    } catch {}
+  let parsed: URL;
+  try {
+    parsed = new URL(/^https?:\/\//i.test(raw) ? raw : "https://" + raw);
+  } catch {
+    return NextResponse.json({ error: "Invalid URL format." }, { status: 400 });
+  }
+  const host = parsed.hostname.toLowerCase();
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !host.includes(".") || BLOCKED_HOSTS.has(host) || isPrivateIp(host)) {
+    return NextResponse.json({ error: "Enter a valid public website URL." }, { status: 400 });
   }
 
-  async function onCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setErr("");
-    setBusy(true);
-    try {
-      const r = await fetch("/api/shield-links", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ destinationUrl: url }),
-      });
-      const d = await r.json();
-      if (!r.ok) return setErr(d.error || "Failed to create link.");
-      save([d, ...items.filter((x) => x.slug !== d.slug)]);
-      setUrl("");
-    } catch {
-      setErr("Network error.");
-    } finally {
-      setBusy(false);
-    }
+  const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.randomBytes(7);
+  let slug = "";
+  for (let i = 0; i < 7; i++) slug += chars[bytes[i] % chars.length];
+  const manageToken = crypto.randomBytes(16).toString("hex");
+
+  const res = await fetch(cfg.url + "/rest/v1/shield_links", {
+    method: "POST",
+    headers: {
+      apikey: cfg.key,
+      Authorization: "Bearer " + cfg.key,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({ slug, destination_url: parsed.toString(), manage_token: manageToken }),
+  });
+
+  if (!res.ok) {
+    return NextResponse.json({ error: "Database error (" + res.status + ")." }, { status: 502 });
   }
 
-  async function refresh(slug: string, token: string) {
-    const r = await fetch("/api/shield-links?slug=" + encodeURIComponent(slug) + "&token=" + encodeURIComponent(token));
-    if (!r.ok) return;
-    const d = await r.json();
-    const entry: ShieldItem = { ...d, manageToken: token };
-    save([entry, ...items.filter((x) => x.slug !== slug)]);
+  return NextResponse.json({
+    slug,
+    shieldUrl: req.nextUrl.origin + "/go/" + slug,
+    manageToken,
+    destinationUrl: parsed.toString(),
+    humanClicks: 0,
+    blockedBots: 0,
+  });
+}
+
+export async function GET(req: NextRequest) {
+  const cfg = getConfig();
+  if (!cfg) return NextResponse.json({ error: "Server Supabase keys missing." }, { status: 500 });
+
+  const slug = (req.nextUrl.searchParams.get("slug") || "").trim().toLowerCase();
+  const token = (req.nextUrl.searchParams.get("token") || "").trim();
+  if (!slug || !token) return NextResponse.json({ error: "Slug and token required." }, { status: 400 });
+
+  const q = new URLSearchParams({ slug: "eq." + slug, manage_token: "eq." + token, limit: "1" });
+  const res = await fetch(cfg.url + "/rest/v1/shield_links?" + q.toString(), {
+    headers: { apikey: cfg.key, Authorization: "Bearer " + cfg.key },
+    cache: "no-store",
+  });
+  const rows = res.ok ? await res.json() : [];
+  if (!Array.isArray(rows) || !rows.length) {
+    return NextResponse.json({ error: "Shield Link not found." }, { status: 404 });
   }
 
-  function copy(val: string, id: string) {
-    navigator.clipboard?.writeText(val);
-    setCopied(id);
-    setTimeout(() => setCopied(""), 1500);
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 px-4 py-4">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4">
-          <Link href="/" className="font-bold text-emerald-400">MyLinkscan</Link>
-          <nav className="flex flex-wrap gap-4 text-sm text-slate-300">
-            <Link href="/" className="hover:text-emerald-400">Scanner</Link>
-            <Link href="/bot-shield" className="hover:text-emerald-400">Bot Shield</Link>
-            <Link href="/shield-links" className="font-semibold text-emerald-400">Shield Links</Link>
-            <Link href="/extension" className="hover:text-emerald-400">Extension</Link>
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-3xl px-4 py-10">
-        <h1 className="text-center text-3xl font-extrabold text-white">Protected Shield Links</h1>
-        <p className="mt-2 text-center text-sm text-slate-400">
-          Wrap any link to block bots and datacenter scrapers while forwarding genuine human clicks.
-        </p>
-
-        <form onSubmit={onCreate} className="mt-6 flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:flex-row">
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://yourwebsite.com" className="flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white" />
-          <button disabled={busy} className="rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-emerald-400">
-            {busy ? "Creating..." : "Create Shield Link"}
-          </button>
-        </form>
-        {err && <p className="mt-2 text-sm text-rose-400">{err}</p>}
-
-        <div className="mt-8 space-y-4">
-          {items.map((it) => (
-            <div key={it.slug} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="break-all font-mono text-sm text-emerald-400">{it.shieldUrl}</span>
-                <div className="flex gap-2">
-                  <button onClick={() => copy(it.shieldUrl, "u-" + it.slug)} className="rounded-lg bg-slate-800 px-3 py-1 text-xs">{copied === "u-" + it.slug ? "Copied" : "Copy Link"}</button>
-                  <button onClick={() => copy(it.manageToken, "t-" + it.slug)} className="rounded-lg bg-slate-800 px-3 py-1 text-xs">{copied === "t-" + it.slug ? "Copied" : "Copy Token"}</button>
-                  <button onClick={() => refresh(it.slug, it.manageToken)} className="rounded-lg bg-emerald-500/20 px-3 py-1 text-xs text-emerald-300">Refresh</button>
-                </div>
-              </div>
-              <p className="mt-1 truncate text-xs text-slate-400">Target: {it.destinationUrl} (Slug: {it.slug})</p>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-emerald-500/10 p-3">
-                  <div className="text-xs text-slate-400">Human Clicks</div>
-                  <div className="text-2xl font-bold text-emerald-400">{it.humanClicks}</div>
-                </div>
-                <div className="rounded-xl bg-rose-500/10 p-3">
-                  <div className="text-xs text-slate-400">Bots Blocked</div>
-                  <div className="text-2xl font-bold text-rose-400">{it.blockedBots}</div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <form onSubmit={(e) => { e.preventDefault(); if (sIn && tIn) refresh(sIn.trim(), tIn.trim()); }} className="mt-8 grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-5 sm:grid-cols-3">
-          <input value={sIn} onChange={(e) => setSIn(e.target.value)} placeholder="Slug" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm" />
-          <input value={tIn} onChange={(e) => setTIn(e.target.value)} placeholder="Manage Token" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm" />
-          <button className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-emerald-400">Load Stats</button>
-        </form>
-      </main>
-    </div>
-  );
+  const row = rows;
+  return NextResponse.json({
+    slug: row.slug,
+    shieldUrl: req.nextUrl.origin + "/go/" + row.slug,
+    destinationUrl: row.destination_url,
+    humanClicks: Number(row.human_clicks || 0),
+    blockedBots: Number(row.blocked_bots || 0),
+  });
 }
