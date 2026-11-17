@@ -8,23 +8,25 @@ export async function verifyProKey(headers: Headers): Promise<boolean> {
   const digest = (value: string) => createHash("sha256").update(value).digest();
   const candidate = digest(key);
   if (configured.some((value) => timingSafeEqual(candidate, digest(value)))) return true;
-  const apiKey = process.env.LEMONSQUEEZY_API_KEY;
-  const store = process.env.LEMONSQUEEZY_STORE_ID;
-  const product = process.env.LEMONSQUEEZY_PRODUCT_ID;
-  if (!apiKey || !store || !product) return false;
+  const productId = process.env.GUMROAD_PRODUCT_ID?.trim();
+  if (!productId) return false;
 
   try {
-    const response = await fetch("https://api.lemonsqueezy.com/v1/licenses/validate", {
+    const response = await fetch("https://api.gumroad.com/v2/licenses/verify", {
       method: "POST",
-      headers: { Accept: "application/json", Authorization: "Bearer " + apiKey },
-      body: new URLSearchParams({ license_key: key }),
+      headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ product_id: productId, license_key: key, increment_uses_count: "false" }),
       signal: AbortSignal.timeout(4000),
       cache: "no-store",
       redirect: "error",
     });
-    if (!response.ok) return false;
+    if (response.status !== 200) return false;
     const result = await response.json();
-    return result.valid === true && String(result.meta?.store_id) === store && String(result.meta?.product_id) === product;
+    const purchase = result?.purchase;
+    const now = Date.now();
+    return result?.success === true && purchase?.refunded !== true && purchase?.chargebacked !== true &&
+      [purchase?.subscription_ended_at, purchase?.subscription_failed_at].every((date) =>
+        date == null || (typeof date === "string" && Date.parse(date) >= now));
   } catch {
     return false;
   }

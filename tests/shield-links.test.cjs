@@ -15,7 +15,55 @@ require.extensions[".ts"] = (module, filename) => {
 const { POST } = require("../src/app/api/shield-links/route.ts");
 const { GET: exportCsv } = require("../src/app/api/shield-links/[slug]/export/route.ts");
 const { validCustomSlug } = require("../src/lib/shield-links.ts");
+const { verifyProKey } = require("../src/lib/pro-license.ts");
 const site = "https://mylinkscan.vercel.app";
+
+test("Gumroad verification preserves master keys and rejects invalid purchases", async (t) => {
+  const variables = { GUMROAD_PRODUCT_ID: "product+/=", PRO_MASTER_KEYS: "test-master" };
+  for (const [name, value] of Object.entries(variables)) {
+    const previous = process.env[name];
+    process.env[name] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+
+  let status = 200;
+  let payload = { success: true, purchase: {} };
+  const fetchMock = t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://api.gumroad.com/v2/licenses/verify");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers["Content-Type"], "application/x-www-form-urlencoded");
+    assert.equal(String(options.body), "product_id=product%2B%2F%3D&license_key=customer%26key&increment_uses_count=false");
+    return Response.json(payload, { status });
+  });
+  assert.equal(await verifyProKey(new Headers({ "x-pro-key": "test-master" })), true);
+  assert.equal(fetchMock.mock.callCount(), 0);
+
+  const customer = new Headers({ "x-pro-key": "customer&key" });
+  assert.equal(await verifyProKey(customer), true);
+  const future = new Date(Date.now() + 60_000).toISOString();
+  payload.purchase = { subscription_ended_at: future, subscription_failed_at: null };
+  assert.equal(await verifyProKey(customer), true);
+
+  for (const purchase of [
+    { refunded: true },
+    { chargebacked: true },
+    { subscription_ended_at: "2000-01-01T00:00:00Z" },
+    { subscription_failed_at: "2000-01-01T00:00:00Z" },
+    { subscription_failed_at: "invalid" },
+  ]) {
+    payload.purchase = purchase;
+    assert.equal(await verifyProKey(customer), false);
+  }
+  payload = { success: false, purchase: {} };
+  assert.equal(await verifyProKey(customer), false);
+  payload.success = true;
+  status = 201;
+  assert.equal(await verifyProKey(customer), false);
+  assert.equal(fetchMock.mock.callCount(), 9);
+});
 
 test("custom slugs enforce length, syntax, and reserved names", () => {
   for (const value of ["abc", "your-brand", "a".repeat(32)]) assert.equal(validCustomSlug(value), true);
