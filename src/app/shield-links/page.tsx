@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import ShieldLinksGuide from "./guide";
 
 type ShieldItem = {
   slug: string;
@@ -151,6 +152,7 @@ export default function ShieldLinksPage() {
           <input value={tIn} onChange={(e) => setTIn(e.target.value)} placeholder="Manage Token" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm" />
           <button className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-emerald-400">Load Stats</button>
         </form>
+        <ShieldLinksGuide />
       </main>
     </div>
   );
