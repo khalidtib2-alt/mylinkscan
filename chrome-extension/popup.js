@@ -5,6 +5,12 @@ const status = document.querySelector("#status");
 const findings = document.querySelector("#findings");
 const liveReport = document.querySelector("#live-report");
 const openReport = document.querySelector("#full-report");
+const protect = document.querySelector("#protect-link");
+const shieldPanel = document.querySelector(".shield-panel");
+const shieldStatus = document.querySelector("#shield-status");
+const shieldResult = document.querySelector("#shield-result");
+const shieldInput = document.querySelector("#shield-url");
+let manageToken = "";
 for (const button of document.querySelectorAll("[data-tool-path]")) {
   button.addEventListener("click", () => {
     void chrome.tabs.create({ url: new URL(button.dataset.toolPath, serviceOrigin).href });
@@ -89,6 +95,56 @@ input.addEventListener("input", () => {
 document.querySelector("#scan-form").addEventListener("submit", (event) => {
   event.preventDefault();
   void inspect();
+});
+
+protect.addEventListener("click", async () => {
+  shieldPanel.hidden = false;
+  shieldResult.hidden = true;
+  manageToken = "";
+  shieldInput.value = "";
+  try {
+    const destinationUrl = new URL(reportUrl(input.value)).searchParams.get("url");
+    protect.disabled = true;
+    shieldStatus.textContent = "Creating Shield Link…";
+    const response = await fetch(serviceOrigin + "/api/shield-links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destinationUrl }),
+      signal: AbortSignal.timeout(12000),
+      credentials: "omit",
+      redirect: "error",
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not create the Shield Link.");
+    if (!/^[a-z0-9]{7}$/.test(data.slug ?? "") || typeof data.manageToken !== "string" || !data.manageToken) {
+      throw new Error("MyLinkscan returned an incomplete Shield Link.");
+    }
+    shieldInput.value = new URL("/go/" + data.slug, serviceOrigin).href;
+    manageToken = data.manageToken;
+    shieldStatus.textContent = "Shield Link created.";
+    shieldResult.hidden = false;
+  } catch (error) {
+    shieldStatus.textContent = error instanceof TypeError ? "Check the URL and your connection, then try again." : error.message || "Could not create the Shield Link.";
+  } finally {
+    protect.disabled = false;
+  }
+});
+
+async function copyShieldValue(value, label) {
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    shieldStatus.textContent = label + " copied.";
+  } catch {
+    shieldStatus.textContent = "Clipboard unavailable. Try copying again.";
+  }
+}
+
+document.querySelector("#copy-shield").addEventListener("click", () => {
+  void copyShieldValue(shieldInput.value, "Shield Link");
+});
+document.querySelector("#copy-manage-token").addEventListener("click", () => {
+  void copyShieldValue(manageToken, "Manage Token");
 });
 
 openReport.addEventListener("click", () => {

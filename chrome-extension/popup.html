@@ -13,7 +13,10 @@
     <form id="scan-form">
       <label for="url">URL to scan</label>
       <input id="url" type="text" inputmode="url" spellcheck="false" autocomplete="off" maxlength="2048" placeholder="https://example.com" required>
-      <button class="primary" type="submit">Scan Now</button>
+      <div class="scan-actions">
+        <button class="primary" type="submit">Scan Now</button>
+        <button class="secondary" id="protect-link" type="button">Protect Link (Shield Link)</button>
+      </div>
     </form>
     <p class="hint">Live checks send the URL to MyLinkscan and may share it with URLhaus. Leave out links with private tokens.</p>
     <section class="panel" aria-labelledby="results-title">
@@ -24,6 +27,18 @@
         <dt>Final destination</dt><dd id="destination"></dd>
         <dt>URLhaus</dt><dd id="feed"></dd>
       </dl>
+    </section>
+    <section class="panel shield-panel" aria-labelledby="shield-title" hidden>
+      <h2 id="shield-title">Protected Shield Link</h2>
+      <p id="shield-status" class="hint" role="status"></p>
+      <div id="shield-result" hidden>
+        <label for="shield-url">Shareable link</label>
+        <input id="shield-url" readonly>
+        <button class="secondary" id="copy-shield" type="button">Copy Shield Link</button>
+        <p class="hint">Copy your private Manage Token before leaving the popup. On the stats page, enter this token and the slug at the end of your Shield Link.</p>
+        <button class="secondary" id="copy-manage-token" type="button">Copy Manage Token</button>
+        <button class="secondary" type="button" data-tool-path="/shield-links">View live Human vs. Bot stats</button>
+      </div>
     </section>
     <button class="secondary" id="full-report" type="button" disabled>Open full report in a new tab</button>
     <nav class="quick-tools" aria-label="Quick tools">
