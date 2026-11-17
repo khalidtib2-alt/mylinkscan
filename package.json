@@ -7,7 +7,8 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "test:shield-links": "node --test tests/shield-links.test.cjs"
+    "test:shield-links": "node --test tests/shield-links.test.cjs tests/extension-pro.test.cjs",
+    "pack:extension": "node scripts/pack-extension.mjs"
   },
   "repository": {
     "type": "git",

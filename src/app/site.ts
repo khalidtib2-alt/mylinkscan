@@ -1,5 +1,5 @@
 export const siteUrl = new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://mylinkscan.vercel.app");
-export const contactEmail = process.env.CONTACT_EMAIL ?? "support@mylinkscan.com";
+export const contactEmail = "support.mylinkscan@gmail.com";
 
 export const trustLinks = [
   { href: "/how-it-works", label: "How It Works" },

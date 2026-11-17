@@ -5,7 +5,8 @@
   "description": "Check links with local heuristics and MyLinkscan live security reports.",
   "permissions": [
     "activeTab",
-    "contextMenus"
+    "contextMenus",
+    "storage"
   ],
   "host_permissions": [
     "https://mylinkscan.vercel.app/*"

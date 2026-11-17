@@ -12,16 +12,32 @@
   <main>
     <form id="scan-form">
       <label for="url">URL to scan</label>
-      <input id="url" type="text" inputmode="url" spellcheck="false" autocomplete="off" maxlength="2048" placeholder="https://example.com" required>
+      <input id="url" type="text" inputmode="url" spellcheck="false" autocomplete="off" maxlength="2048" placeholder="Paste a URL or use the active tab">
+      <div id="custom-slug-field" hidden>
+        <label for="custom-slug">Custom Slug (optional)</label>
+        <input id="custom-slug" type="text" maxlength="32" spellcheck="false" autocomplete="off" placeholder="your-brand">
+      </div>
       <div class="scan-actions">
         <button class="primary" type="submit">Scan Now</button>
         <button class="secondary" id="protect-link" type="button">Protect Link (Shield Link)</button>
       </div>
     </form>
+    <details class="panel shield-panel">
+      <summary>Pro Key</summary>
+      <form id="pro-form" class="shield-panel">
+        <label for="pro-key">License key</label>
+        <input id="pro-key" type="password" maxlength="256" autocomplete="off" required>
+        <div class="scan-actions">
+          <button class="primary" type="submit">Save</button>
+          <button class="secondary" id="clear-pro" type="button">Clear</button>
+        </div>
+      </form>
+      <p id="pro-status" class="hint" role="status"></p>
+    </details>
     <p class="hint">Live checks send the URL to MyLinkscan and may share it with URLhaus. Leave out links with private tokens.</p>
     <section class="panel" aria-labelledby="results-title">
       <h2 id="results-title">Scan results</h2>
-      <p id="status" role="status" class="hint">Paste a link to get started.</p>
+      <p id="status" role="status" class="hint">Select Scan Now to check the active tab or paste a link.</p>
       <ul id="findings" hidden></ul>
       <dl id="live-report" hidden>
         <dt>Final destination</dt><dd id="destination"></dd>
@@ -31,6 +47,7 @@
     <section class="panel shield-panel" aria-labelledby="shield-title" hidden>
       <h2 id="shield-title">Protected Shield Link</h2>
       <p id="shield-status" class="hint" role="status"></p>
+      <button class="secondary" id="shield-upgrade" type="button" data-tool-path="/shield-links" hidden>View Shield Links Pro plans</button>
       <div id="shield-result" hidden>
         <label for="shield-url">Shareable link</label>
         <input id="shield-url" readonly>
