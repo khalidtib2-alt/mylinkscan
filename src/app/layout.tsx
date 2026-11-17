@@ -14,6 +14,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/" },
   description,
   applicationName: "MyLinkscan",
+  verification: { google: "aLwwZpZhLlUEgoU5uykrNyH0WSXVLXE30FYwc2ZIlqU" },
   openGraph: { title, description, type: "website", siteName: "MyLinkscan" },
   twitter: { card: "summary", title, description },
 };
