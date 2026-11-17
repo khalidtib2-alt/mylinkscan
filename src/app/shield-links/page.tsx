@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 type ShieldItem = {
@@ -19,23 +19,61 @@ export default function ShieldLinksPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [items, setItems] = useState<ShieldItem[]>([]);
+  const currentItems = useRef<ShieldItem[]>([]);
   const [copied, setCopied] = useState("");
   const [sIn, setSIn] = useState("");
   const [tIn, setTIn] = useState("");
 
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(KEY) || "[]");
-      if (Array.isArray(saved)) setItems(saved);
-    } catch {}
-  }, []);
-
-  function save(next: ShieldItem[]) {
+  const save = useCallback((next: ShieldItem[]) => {
+    currentItems.current = next;
     setItems(next);
     try {
       localStorage.setItem(KEY, JSON.stringify(next));
     } catch {}
-  }
+  }, []);
+
+  const refresh = useCallback(async (slug: string, token: string, signal?: AbortSignal) => {
+    try {
+      const params = new URLSearchParams({ slug, token });
+      const response = await fetch("/api/shield-links?" + params, { cache: "no-store", signal });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (signal?.aborted) return;
+      const latest = currentItems.current;
+      if (signal) {
+        save(latest.map((item) => item.slug === slug && item.manageToken === token
+          ? { ...item, humanClicks: data.humanClicks, blockedBots: data.blockedBots }
+          : item));
+      } else {
+        save([{ ...data, manageToken: token }, ...latest.filter((item) => item.slug !== slug)]);
+      }
+    } catch {
+      // Keep the last saved counts when the network is unavailable.
+    }
+  }, [save]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(KEY) || "[]");
+      if (Array.isArray(saved)) save(saved);
+    } catch {}
+
+    let controller: AbortController | undefined;
+    function refreshSaved() {
+      controller?.abort();
+      const { signal } = (controller = new AbortController());
+      for (const item of currentItems.current) {
+        if (item?.slug && item.manageToken) void refresh(item.slug, item.manageToken, signal);
+      }
+    }
+
+    refreshSaved();
+    window.addEventListener("focus", refreshSaved);
+    return () => {
+      controller?.abort();
+      window.removeEventListener("focus", refreshSaved);
+    };
+  }, [refresh, save]);
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -49,21 +87,13 @@ export default function ShieldLinksPage() {
       });
       const d = await r.json();
       if (!r.ok) return setErr(d.error || "Failed to create link.");
-      save([d, ...items.filter((x) => x.slug !== d.slug)]);
+      save([d, ...currentItems.current.filter((x) => x.slug !== d.slug)]);
       setUrl("");
     } catch {
       setErr("Network error.");
     } finally {
       setBusy(false);
     }
-  }
-
-  async function refresh(slug: string, token: string) {
-    const r = await fetch("/api/shield-links?slug=" + encodeURIComponent(slug) + "&token=" + encodeURIComponent(token));
-    if (!r.ok) return;
-    const d = await r.json();
-    const entry: ShieldItem = { ...d, manageToken: token };
-    save([entry, ...items.filter((x) => x.slug !== slug)]);
   }
 
   function copy(val: string, id: string) {
