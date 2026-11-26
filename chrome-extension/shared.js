@@ -45,7 +45,7 @@ export function scanUrl(input) {
   return { host, warnings, assumedHttps: !hasScheme };
 }
 
-export const serviceOrigin = "https://mylinkscan.vercel.app";
+export const serviceOrigin = "https://mylinkscan.com";
 
 /** @param {string} input */
 export function reportUrl(input) {

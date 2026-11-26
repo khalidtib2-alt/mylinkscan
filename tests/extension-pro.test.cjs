@@ -24,7 +24,7 @@ test("popup saves and clears Pro, creates a custom link, and shows the Free upgr
       assert.equal(options.headers["x-pro-key"], "example-pro-key");
       return Response.json({ pro: true });
     }
-    assert.equal(url, "https://mylinkscan.vercel.app/api/shield-links");
+    assert.equal(url, "https://mylinkscan.com/api/shield-links");
     if (!options.headers["x-pro-key"]) {
       assert.deepEqual(JSON.parse(options.body), { destinationUrl: "https://example.com/" });
       return Response.json({ error: "Free supports 3 active Shield Links." }, { status: 403 });
@@ -56,7 +56,7 @@ test("popup saves and clears Pro, creates a custom link, and shows the Free upgr
   element("#custom-slug").value = "your-brand";
   await element("#protect-link").listeners.click();
   assert.equal(tabReads, 1);
-  assert.equal(element("#shield-url").value, "https://mylinkscan.vercel.app/go/your-brand");
+  assert.equal(element("#shield-url").value, "https://mylinkscan.com/go/your-brand");
   element("#clear-pro").listeners.click();
   await new Promise(setImmediate);
   assert.equal(stored.proKey, undefined);

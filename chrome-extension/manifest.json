@@ -9,7 +9,7 @@
     "storage"
   ],
   "host_permissions": [
-    "https://mylinkscan.vercel.app/*"
+    "https://mylinkscan.com/*"
   ],
   "background": {
     "service_worker": "background.js",

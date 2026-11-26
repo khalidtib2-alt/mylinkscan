@@ -16,7 +16,7 @@ const { POST } = require("../src/app/api/shield-links/route.ts");
 const { GET: exportCsv } = require("../src/app/api/shield-links/[slug]/export/route.ts");
 const { validCustomSlug } = require("../src/lib/shield-links.ts");
 const { verifyProKey } = require("../src/lib/pro-license.ts");
-const site = "https://mylinkscan.vercel.app";
+const site = "https://mylinkscan.com";
 
 test("Gumroad verification preserves master keys and rejects invalid purchases", async (t) => {
   const variables = { GUMROAD_PRODUCT_ID: "product+/=", PRO_MASTER_KEYS: "test-master" };
