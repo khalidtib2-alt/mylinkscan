@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { requestHasSameOrigin, requestIsAdmin } from "../../../../lib/admin-auth";
 import { expirationForPlan, makeProLicense, ordersConfig, safeOrderActionDiagnostic, supabaseDiagnostic } from "../../../../lib/pro-orders";
+import { sendProLicenseEmail } from "../../../../lib/pro-email";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +49,8 @@ export async function POST(request: Request) {
       const expiresAt = expirationForPlan("comp");
       const license = makeProLicense(id, expiresAt);
       const rows = await db("pro_orders", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ id, customer_email: email, payment_method: "manual", amount_usd: 0, plan: "comp", status: "active", expires_at: expiresAt, license_key: license.key, license_hash: license.hash, review_note: "Complimentary key issued by administrator." }) });
-      return NextResponse.json({ order: rows?.[0], message: "Complimentary Pro key created." }, { status: 201 });
+      const emailResult = await sendProLicenseEmail({ email, licenseKey: license.key, plan: "comp", expiresAt });
+      return NextResponse.json({ order: rows?.[0], message: emailResult.sent ? "Complimentary Pro key created and emailed to the customer." : "Complimentary Pro key created.", emailSent: emailResult.sent, ...(!emailResult.sent && { emailReason: emailResult.reason }) }, { status: 201 });
     }
 
     const id = String(body?.id || "");
@@ -56,6 +58,13 @@ export async function POST(request: Request) {
     const rows = await db(`pro_orders?select=${SELECT}&id=eq.${encodeURIComponent(id)}&limit=1`) as Record<string, unknown>[];
     const order = rows?.[0];
     if (!order) return NextResponse.json({ error: "Order not found." }, { status: 404 });
+    if (action === "resend_key_email") {
+      if (order.status !== "active" || typeof order.license_key !== "string" || !order.license_key) return NextResponse.json({ error: "Only active orders with an issued license key can be emailed." }, { status: 409 });
+      if (typeof order.customer_email !== "string" || !order.customer_email) return NextResponse.json({ error: "This order has no customer email address." }, { status: 409 });
+      const emailResult = await sendProLicenseEmail({ email: order.customer_email, licenseKey: order.license_key, plan: String(order.plan || "month"), expiresAt: String(order.expires_at || "") });
+      if (!emailResult.sent) return NextResponse.json({ error: `Could not resend the license email: ${emailResult.reason}` }, { status: 502 });
+      return NextResponse.json({ ok: true, message: `License key email sent to ${order.customer_email}.` });
+    }
     if (action === "approve" && order.status !== "pending_review") return NextResponse.json({ error: "Only pending orders can be approved." }, { status: 409 });
     if (action === "extend" && order.status !== "active") return NextResponse.json({ error: "Only active orders can be extended." }, { status: 409 });
     if (action === "revoke" && order.status !== "active") return NextResponse.json({ error: "Only active orders can be revoked." }, { status: 409 });
@@ -67,7 +76,11 @@ export async function POST(request: Request) {
       const license = makeProLicense(order.creem_subscription_id ? `subscription:${order.creem_subscription_id}` : id, expiresAt);
       await patchOrder(url, headers, id, { status: "active", expires_at: expiresAt, license_key: license.key, license_hash: license.hash, review_note: action === "extend" ? "Access extended by 30 days by administrator." : "Order approved by administrator." });
       if (order.creem_subscription_id) await db(`pro_subscriptions?creem_subscription_id=eq.${encodeURIComponent(String(order.creem_subscription_id))}`, { method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ status: "active", current_period_end: expiresAt, latest_order_id: id, license_key: license.key, license_hash: license.hash, updated_at: new Date().toISOString() }) });
-      return NextResponse.json({ ok: true, licenseKey: license.key, expiresAt });
+      if (action === "approve" && typeof order.customer_email === "string" && order.customer_email) {
+        const emailResult = await sendProLicenseEmail({ email: order.customer_email, licenseKey: license.key, plan: String(order.plan || "month"), expiresAt });
+        return NextResponse.json({ ok: true, licenseKey: license.key, expiresAt, emailSent: emailResult.sent, ...(!emailResult.sent && { emailReason: emailResult.reason }), message: emailResult.sent ? `Order approved and license key emailed to ${order.customer_email}.` : `Order approved. Email delivery was not completed: ${emailResult.reason}` });
+      }
+      return NextResponse.json({ ok: true, licenseKey: license.key, expiresAt, emailSent: false, message: "Order approved. No customer email is available." });
     }
 
     if (action === "revoke") {

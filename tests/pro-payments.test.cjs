@@ -11,6 +11,7 @@ require.extensions[".ts"] = (module, filename) => {
 };
 
 const { verifyPolygonTransfer, verifyTronTransfer, makeProLicense, verifyIssuedProLicense } = require("../src/lib/pro-orders.ts");
+const { sendProLicenseEmail } = require("../src/lib/pro-email.ts");
 const { POST: submitCrypto } = require("../src/app/api/pro/crypto-verify/route.ts");
 const { POST: manageOrder } = require("../src/app/api/admin/orders/route.ts");
 const { POST: adminLogin } = require("../src/app/api/admin/auth/route.ts");
@@ -167,4 +168,40 @@ test("Admin approve, extend, and revoke actions update the persistent order and 
   assert.equal((await call("extend")).status, 200);
   assert.equal((await call("revoke")).status, 200);
   assert.equal(status, "revoked");
+});
+
+test("Pro license email uses Resend and falls back without blocking when unconfigured", async (t) => {
+  const variableNames = ["RESEND_API_KEY", "RESEND_FROM_EMAIL", "RESEND_REPLY_TO"];
+  const previous = Object.fromEntries(variableNames.map((name) => [name, process.env[name]]));
+  t.after(() => variableNames.forEach((name) => previous[name] === undefined ? delete process.env[name] : process.env[name] = previous[name]));
+
+  delete process.env.RESEND_API_KEY;
+  let fetchCalled = false;
+  t.mock.method(globalThis, "fetch", async () => { fetchCalled = true; return Response.json({ id: "unexpected" }); });
+  assert.deepEqual(await sendProLicenseEmail({ email: "buyer@example.com", licenseKey: "MLP.test-key", plan: "month", expiresAt: "2027-01-01T00:00:00.000Z" }), { sent: false, reason: "RESEND_API_KEY not configured" });
+  assert.equal(fetchCalled, false);
+  mock.restoreAll();
+
+  process.env.RESEND_API_KEY = "resend-test-key";
+  process.env.RESEND_FROM_EMAIL = "MyLinkscan Test <test@example.com>";
+  process.env.RESEND_REPLY_TO = "help@example.com";
+  let requestBody;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://api.resend.com/emails");
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers.Authorization, "Bearer resend-test-key");
+    requestBody = JSON.parse(options.body);
+    return Response.json({ id: "email-test-id" }, { status: 200 });
+  });
+  assert.deepEqual(await sendProLicenseEmail({ email: "buyer@example.com", licenseKey: "MLP.test-key", plan: "year", expiresAt: "2027-01-01T00:00:00.000Z" }), { sent: true });
+  assert.equal(requestBody.from, "MyLinkscan Test <test@example.com>");
+  assert.deepEqual(requestBody.to, ["buyer@example.com"]);
+  assert.equal(requestBody.reply_to, "help@example.com");
+  assert.match(requestBody.subject, /MyLinkscan Pro License Key/);
+  assert.match(requestBody.html, /MLP\.test-key/);
+  assert.match(requestBody.html, /1 year Pro plan/);
+  assert.match(requestBody.html, /January 1, 2027/);
+  assert.match(requestBody.html, /https:\/\/mylinkscan\.com\/shield-links/);
+  assert.match(requestBody.text, /MLP\.test-key/);
+  assert.match(requestBody.text, /https:\/\/mylinkscan\.com\/shield-links/);
 });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { expirationForPlan, makeProLicense, PRO_PRICES, validPaymentWallet, verifyCryptoTransfer, type CryptoAsset, type CryptoNetwork, type ProPlan, ordersConfig } from "../../../../lib/pro-orders";
+import { sendProLicenseEmail } from "../../../../lib/pro-email";
 
 export const runtime = "nodejs";
 
@@ -51,7 +52,8 @@ export async function POST(request: Request) {
   try {
     const license = makeProLicense(orderId, expiresAt);
     await updateOrder(config.url, config.headers, orderId, { status: "active", expires_at: expiresAt, license_key: license.key, license_hash: license.hash, review_note: null });
-    return NextResponse.json({ status: "active", message: "Payment verified. Your Pro license key is ready.", licenseKey: license.key, expiresAt });
+    const emailResult = await sendProLicenseEmail({ email, licenseKey: license.key, plan, expiresAt });
+    return NextResponse.json({ status: "active", message: emailResult.sent ? "Payment verified. Your Pro license key was emailed to you." : "Payment verified. Your Pro license key is ready." , licenseKey: license.key, expiresAt, emailSent: emailResult.sent, ...(!emailResult.sent && { emailReason: emailResult.reason }) });
   } catch {
     await updateOrder(config.url, config.headers, orderId, { status: "pending_review", review_note: "Payment is verified. License issuance needs administrator review." });
     return NextResponse.json({ status: "pending_review", message: "Payment is verified. An administrator will issue your license shortly." });
