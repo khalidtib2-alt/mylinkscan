@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ADMIN_COOKIE, createAdminSession, requestHasSameOrigin, verifyAdminPassword } from "../../../../lib/admin-auth";
+import { ADMIN_COOKIE, createAdminSession, hasConfiguredAdminSecret, requestHasSameOrigin, verifyAdminPassword } from "../../../../lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -10,6 +10,9 @@ export async function POST(request: Request) {
     const response = NextResponse.json({ ok: true });
     response.cookies.set(ADMIN_COOKIE, "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 0 });
     return response;
+  }
+  if (!hasConfiguredAdminSecret()) {
+    return NextResponse.json({ error: "Admin secret is not configured in Vercel environment variables" }, { status: 503 });
   }
   if (!verifyAdminPassword(body?.secret)) return NextResponse.json({ error: "Invalid admin credentials." }, { status: 401 });
   try {

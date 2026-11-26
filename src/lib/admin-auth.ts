@@ -15,6 +15,10 @@ function equal(a: string, b: string) {
   return timingSafeEqual(left, right);
 }
 
+export function hasConfiguredAdminSecret() {
+  return Boolean(process.env.ADMIN_DASHBOARD_SECRET?.trim() || process.env.ADMIN_SECRET?.trim());
+}
+
 export function verifyAdminPassword(input: unknown) {
   const expected = process.env.ADMIN_DASHBOARD_SECRET?.trim() || process.env.ADMIN_SECRET?.trim();
   if (typeof input !== "string" || !expected || expected.length < 32) return false;
