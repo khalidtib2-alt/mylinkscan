@@ -13,7 +13,8 @@ require.extensions[".ts"] = (module, filename) => {
 const { verifyPolygonTransfer, verifyTronTransfer, makeProLicense, verifyIssuedProLicense } = require("../src/lib/pro-orders.ts");
 const { POST: submitCrypto } = require("../src/app/api/pro/crypto-verify/route.ts");
 const { POST: manageOrder } = require("../src/app/api/admin/orders/route.ts");
-const { createAdminSession } = require("../src/lib/admin-auth.ts");
+const { POST: adminLogin } = require("../src/app/api/admin/auth/route.ts");
+const { ADMIN_COOKIE, createAdminSession, requestIsAdmin, verifyAdminSession } = require("../src/lib/admin-auth.ts");
 const polygonToken = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
 const wallet = "0x1111111111111111111111111111111111111111";
 const transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
@@ -106,6 +107,35 @@ test("Issued license key verifies only while its active order is persisted", asy
   row = null;
   assert.equal(await verifyIssuedProLicense(license.key), false);
   assert.equal(await verifyIssuedProLicense(license.key + "x"), false);
+});
+
+test("Admin login trims configured and submitted secrets, accepts fallback alias, and rejects wrong keys", async (t) => {
+  const variables = ["ADMIN_DASHBOARD_SECRET", "ADMIN_SECRET"];
+  const previous = Object.fromEntries(variables.map((name) => [name, process.env[name]]));
+  t.after(() => variables.forEach((name) => previous[name] === undefined ? delete process.env[name] : process.env[name] = previous[name]));
+
+  const dashboardSecret = "admin-login-secret-with-at-least-32-characters";
+  process.env.ADMIN_DASHBOARD_SECRET = `  ${dashboardSecret}  `;
+  delete process.env.ADMIN_SECRET;
+  const login = (secret) => adminLogin(new Request("https://mylinkscan.com/api/admin/auth", {
+    method: "POST", headers: { "Content-Type": "application/json", Origin: "https://mylinkscan.com" }, body: JSON.stringify({ secret }),
+  }));
+
+  const success = await login(`  ${dashboardSecret}  `);
+  assert.equal(success.status, 200);
+  const cookie = success.headers.get("set-cookie");
+  assert.match(cookie, new RegExp(`^${ADMIN_COOKIE}=`));
+  assert.match(cookie, /Path=\//i);
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=Lax/i);
+  const token = cookie.match(new RegExp(`^${ADMIN_COOKIE}=([^;]+)`))[1];
+  assert.equal(verifyAdminSession(token), true);
+  assert.equal(requestIsAdmin(new Request("https://mylinkscan.com/api/admin/orders", { headers: { Cookie: `${ADMIN_COOKIE}=${token}` } })), true);
+  assert.equal((await login("incorrect-admin-secret-that-is-long-enough" )).status, 401);
+
+  process.env.ADMIN_DASHBOARD_SECRET = "   ";
+  process.env.ADMIN_SECRET = ` ${dashboardSecret} `;
+  assert.equal((await login(dashboardSecret)).status, 200);
 });
 
 test("Admin approve, extend, and revoke actions update the persistent order and key", async (t) => {

@@ -4,8 +4,8 @@ export const ADMIN_COOKIE = "mylinkscan_admin_session";
 const MAX_SESSION_MS = 12 * 60 * 60 * 1000;
 
 function secret() {
-  const value = process.env.ADMIN_DASHBOARD_SECRET;
-  if (!value || value.length < 32) throw new Error("ADMIN_DASHBOARD_SECRET must contain at least 32 characters.");
+  const value = process.env.ADMIN_DASHBOARD_SECRET?.trim() || process.env.ADMIN_SECRET?.trim();
+  if (!value || value.length < 32) throw new Error("ADMIN_DASHBOARD_SECRET or ADMIN_SECRET must contain at least 32 characters.");
   return value;
 }
 
@@ -16,9 +16,9 @@ function equal(a: string, b: string) {
 }
 
 export function verifyAdminPassword(input: unknown) {
-  const expected = process.env.ADMIN_DASHBOARD_SECRET;
+  const expected = process.env.ADMIN_DASHBOARD_SECRET?.trim() || process.env.ADMIN_SECRET?.trim();
   if (typeof input !== "string" || !expected || expected.length < 32) return false;
-  return equal(input, expected);
+  return equal(input.trim(), expected);
 }
 
 export function createAdminSession(now = Date.now()) {

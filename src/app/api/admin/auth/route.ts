@@ -8,14 +8,14 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   if (body?.action === "logout") {
     const response = NextResponse.json({ ok: true });
-    response.cookies.set(ADMIN_COOKIE, "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict", path: "/", maxAge: 0 });
+    response.cookies.set(ADMIN_COOKIE, "", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 0 });
     return response;
   }
   if (!verifyAdminPassword(body?.secret)) return NextResponse.json({ error: "Invalid admin credentials." }, { status: 401 });
   try {
     const session = createAdminSession();
     const response = NextResponse.json({ ok: true });
-    response.cookies.set(ADMIN_COOKIE, session.value, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict", path: "/", expires: new Date(session.expires) });
+    response.cookies.set(ADMIN_COOKIE, session.value, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", expires: new Date(session.expires) });
     return response;
   } catch {
     return NextResponse.json({ error: "Admin authentication is not configured." }, { status: 503 });
