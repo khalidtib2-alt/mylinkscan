@@ -18,6 +18,44 @@ const { validCustomSlug } = require("../src/lib/shield-links.ts");
 const { verifyProKey } = require("../src/lib/pro-license.ts");
 const site = "https://mylinkscan.com";
 
+test("Creem validates active license keys while master keys bypass external verification", async (t) => {
+  const variables = { CREEM_API_KEY: "creem-test-secret", PRO_MASTER_KEYS: "test-master" };
+  for (const [name, value] of Object.entries(variables)) {
+    const previous = process.env[name];
+    process.env[name] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+  const previousGumroad = process.env.GUMROAD_PRODUCT_ID;
+  delete process.env.GUMROAD_PRODUCT_ID;
+  t.after(() => {
+    if (previousGumroad === undefined) delete process.env.GUMROAD_PRODUCT_ID;
+    else process.env.GUMROAD_PRODUCT_ID = previousGumroad;
+  });
+
+  let status = 200;
+  let payload = { status: "active" };
+  const fetchMock = t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://api.creem.io/v1/licenses/validate");
+    assert.equal(options.method, "POST");
+    assert.deepEqual(options.headers, { "x-api-key": "creem-test-secret", "Content-Type": "application/json" });
+    assert.equal(options.body, JSON.stringify({ key: "customer-license" }));
+    return Response.json(payload, { status });
+  });
+
+  assert.equal(await verifyProKey(new Headers({ "x-pro-key": "test-master" })), true);
+  assert.equal(fetchMock.mock.callCount(), 0);
+  assert.equal(await verifyProKey(new Headers({ "x-pro-key": "customer-license" })), true);
+  payload = { status: "revoked" };
+  assert.equal(await verifyProKey(new Headers({ "x-pro-key": "customer-license" })), false);
+  payload = { status: "active" };
+  status = 201;
+  assert.equal(await verifyProKey(new Headers({ "x-pro-key": "customer-license" })), false);
+  assert.equal(fetchMock.mock.callCount(), 3);
+});
+
 test("Gumroad verification preserves master keys and rejects invalid purchases", async (t) => {
   const variables = { GUMROAD_PRODUCT_ID: "product+/=", PRO_MASTER_KEYS: "test-master" };
   for (const [name, value] of Object.entries(variables)) {

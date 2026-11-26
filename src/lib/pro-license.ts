@@ -8,6 +8,27 @@ export async function verifyProKey(headers: Headers): Promise<boolean> {
   const digest = (value: string) => createHash("sha256").update(value).digest();
   const candidate = digest(key);
   if (configured.some((value) => timingSafeEqual(candidate, digest(value)))) return true;
+
+  const creemApiKey = process.env.CREEM_API_KEY?.trim();
+  if (creemApiKey) {
+    try {
+      const response = await fetch("https://api.creem.io/v1/licenses/validate", {
+        method: "POST",
+        headers: { "x-api-key": creemApiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+        signal: AbortSignal.timeout(4000),
+        cache: "no-store",
+        redirect: "error",
+      });
+      if (response.status === 200) {
+        const result = await response.json();
+        if (result?.status === "active") return true;
+      }
+    } catch {
+      // Try Gumroad if Creem is unavailable or does not recognize this key.
+    }
+  }
+
   const productId = process.env.GUMROAD_PRODUCT_ID?.trim();
   if (!productId) return false;
 
