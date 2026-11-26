@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ADMIN_COOKIE, createAdminSession, hasConfiguredAdminSecret, requestHasSameOrigin, verifyAdminPassword } from "../../../../lib/admin-auth";
+import { ADMIN_COOKIE, createAdminSession, hasConfiguredAdminSecret, hasUsableAdminSecret, requestHasSameOrigin, verifyAdminPassword } from "../../../../lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -14,7 +14,8 @@ export async function POST(request: Request) {
   if (!hasConfiguredAdminSecret()) {
     return NextResponse.json({ error: "Admin secret is not configured in Vercel environment variables" }, { status: 503 });
   }
-  if (!verifyAdminPassword(body?.secret)) return NextResponse.json({ error: "Invalid admin credentials." }, { status: 401 });
+  if (!hasUsableAdminSecret()) return NextResponse.json({ error: "Admin secret must contain at least 32 non-whitespace characters." }, { status: 503 });
+  if (!verifyAdminPassword(body?.secret)) return NextResponse.json({ error: "Admin secret did not match. Check the configured Vercel admin secret and redeploy after changing it." }, { status: 401 });
   try {
     const session = createAdminSession();
     const response = NextResponse.json({ ok: true });

@@ -133,6 +133,10 @@ test("Admin login trims configured and submitted secrets, accepts fallback alias
   assert.equal(requestIsAdmin(new Request("https://mylinkscan.com/api/admin/orders", { headers: { Cookie: `${ADMIN_COOKIE}=${token}` } })), true);
   assert.equal((await login("incorrect-admin-secret-that-is-long-enough" )).status, 401);
 
+  process.env.ADMIN_DASHBOARD_SECRET = "different-dashboard-secret-with-32-characters";
+  process.env.ADMIN_SECRET = ` ${dashboardSecret} `;
+  assert.equal((await login(dashboardSecret)).status, 200);
+
   process.env.ADMIN_DASHBOARD_SECRET = "   ";
   process.env.ADMIN_SECRET = ` ${dashboardSecret} `;
   assert.equal((await login(dashboardSecret)).status, 200);

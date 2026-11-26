@@ -3,9 +3,13 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 export const ADMIN_COOKIE = "mylinkscan_admin_session";
 const MAX_SESSION_MS = 12 * 60 * 60 * 1000;
 
-function secret() {
-  const value = process.env.ADMIN_DASHBOARD_SECRET?.trim() || process.env.ADMIN_SECRET?.trim();
-  if (!value || value.length < 32) throw new Error("ADMIN_DASHBOARD_SECRET or ADMIN_SECRET must contain at least 32 characters.");
+function configuredSecrets() {
+  return [...new Set([process.env.ADMIN_DASHBOARD_SECRET?.trim(), process.env.ADMIN_SECRET?.trim()].filter((value): value is string => Boolean(value)))];
+}
+
+function sessionSecret() {
+  const value = configuredSecrets().find((item) => item.length >= 32);
+  if (!value) throw new Error("ADMIN_DASHBOARD_SECRET or ADMIN_SECRET must contain at least 32 characters.");
   return value;
 }
 
@@ -16,19 +20,23 @@ function equal(a: string, b: string) {
 }
 
 export function hasConfiguredAdminSecret() {
-  return Boolean(process.env.ADMIN_DASHBOARD_SECRET?.trim() || process.env.ADMIN_SECRET?.trim());
+  return configuredSecrets().length > 0;
+}
+
+export function hasUsableAdminSecret() {
+  return configuredSecrets().some((value) => value.length >= 32);
 }
 
 export function verifyAdminPassword(input: unknown) {
-  const expected = process.env.ADMIN_DASHBOARD_SECRET?.trim() || process.env.ADMIN_SECRET?.trim();
-  if (typeof input !== "string" || !expected || expected.length < 32) return false;
-  return equal(input.trim(), expected);
+  if (typeof input !== "string") return false;
+  const candidate = input.trim();
+  return configuredSecrets().some((expected) => expected.length >= 32 && equal(candidate, expected));
 }
 
 export function createAdminSession(now = Date.now()) {
   const expires = now + MAX_SESSION_MS;
   const body = String(expires);
-  const sig = createHmac("sha256", secret()).update(body).digest("base64url");
+  const sig = createHmac("sha256", sessionSecret()).update(body).digest("base64url");
   return { value: `${body}.${sig}`, expires };
 }
 
@@ -39,7 +47,7 @@ export function verifyAdminSession(value: string | undefined, now = Date.now()) 
   const expires = Number(expiresText);
   if (!Number.isSafeInteger(expires) || expires <= now || expires > now + MAX_SESSION_MS + 60_000) return false;
   try {
-    const expected = createHmac("sha256", secret()).update(expiresText).digest();
+    const expected = createHmac("sha256", sessionSecret()).update(expiresText).digest();
     const given = Buffer.from(signature, "base64url");
     return given.length === expected.length && timingSafeEqual(given, expected);
   } catch { return false; }
