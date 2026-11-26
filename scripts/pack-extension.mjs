@@ -1,4 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const root = new URL("../chrome-extension/", import.meta.url);
 const destination = new URL("../dist/", import.meta.url);
@@ -14,6 +16,8 @@ function crc32(bytes) {
 }
 
 const entries = await Promise.all(files.map(async (file) => ({ name: Buffer.from(file), data: await readFile(new URL(file, root)) })));
+const archivePath = new URL("../dist/mylinkscan-extension.zip", import.meta.url);
+const desktopPath = join(homedir(), "Desktop", "mylinkscan-extension.zip");
 const local = [];
 const directory = [];
 let offset = 0;
@@ -46,6 +50,10 @@ end.writeUInt16LE(files.length, 8);
 end.writeUInt16LE(files.length, 10);
 end.writeUInt32LE(central.length, 12);
 end.writeUInt32LE(offset, 16);
+const zip = Buffer.concat([...local, central, end]);
 await mkdir(destination, { recursive: true });
-await writeFile(new URL("mylinkscan-extension.zip", destination), Buffer.concat([...local, central, end]));
+await writeFile(archivePath, zip);
+await mkdir(join(homedir(), "Desktop"), { recursive: true });
+await writeFile(desktopPath, zip);
 console.log("Created dist/mylinkscan-extension.zip");
+console.log(`Copied ${desktopPath}`);

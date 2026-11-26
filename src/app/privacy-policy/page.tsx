@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { pageMetadata, SitePage } from "../site-page";
 
-export const metadata = pageMetadata("Privacy Policy", "See how MyLinkscan handles local file scans, submitted URLs, and contact messages.", "/privacy-policy");
+export const metadata = pageMetadata("Privacy Policy", "See how MyLinkscan handles local file scans, submitted URLs, and contact messages.", "/privacy");
 
 export default function PrivacyPage() {
   return (
@@ -18,7 +18,7 @@ export default function PrivacyPage() {
       <p>The contact form prepares a draft in your email app. If you send the draft, your email provider transmits your address and message. We use messages to respond and investigate reported issues.</p>
       <h2>Chrome Extension Privacy Policy</h2>
       <p>The extension reads the active tab URL when you select Scan Now or Protect Link without a pasted URL. It reads a right-clicked link only when you select Scan Link with MyLinkscan. It does not monitor browsing in the background, collect your browsing history, or sell user data.</p>
-      <p>The extension sends submitted URLs over HTTPS to mylinkscan.vercel.app for scanning or Shield Link creation. MyLinkscan checks public scan URLs with URLhaus when enabled and may contact the destination to check its connection and redirects. Shield Link creation stores the destination so the link can redirect visitors.</p>
+      <p>The extension sends submitted URLs over HTTPS to mylinkscan.com for scanning or Shield Link creation. MyLinkscan checks public scan URLs with URLhaus when enabled and may contact the destination to check its connection and redirects. Shield Link creation stores the destination so the link can redirect visitors.</p>
       <p>The extension saves your optional Pro license key and any saved extension settings on your device using chrome.storage.local. It sends the key over HTTPS to MyLinkscan to verify it or use Pro features. MyLinkscan may verify the license with its licensing provider. Select Clear in the popup to remove the local key.</p>
       <p>MyLinkscan’s use and transfer of information received from Chrome APIs adheres to the <a href="https://developer.chrome.com/docs/webstore/program-policies/user-data">Chrome Web Store User Data Policy</a>, including its Limited Use requirements. We use this information to provide the features described here and do not use it for personalized advertising.</p>
       <h2>Privacy questions</h2>
