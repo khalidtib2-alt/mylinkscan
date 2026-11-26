@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { requestHasSameOrigin, requestIsAdmin } from "../../../../lib/admin-auth";
-import { expirationForPlan, makeProLicense, ordersConfig } from "../../../../lib/pro-orders";
+import { expirationForPlan, makeProLicense, ordersConfig, safeOrderActionDiagnostic, supabaseDiagnostic } from "../../../../lib/pro-orders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ const SELECT = "id,customer_email,payment_method,network,asset,amount_usd,curren
 async function db(path: string, init: RequestInit = {}) {
   const { url, headers } = ordersConfig();
   const response = await fetch(`${url}/rest/v1/${path}`, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> || {}) }, cache: "no-store", signal: init.signal ?? AbortSignal.timeout(7000) });
-  if (!response.ok) throw new Error("Persistent order storage request failed.");
+  if (!response.ok) throw await supabaseDiagnostic(response, `REST ${path.split("?")[0]}`);
   return response.status === 204 ? null : response.json();
 }
 
@@ -20,13 +20,13 @@ export async function GET(request: Request) {
     const { url, headers } = ordersConfig();
     const expiredQuery = new URLSearchParams({ status: "eq.active", expires_at: `lte.${new Date().toISOString()}` });
     const expire = await fetch(`${url}/rest/v1/pro_orders?${expiredQuery}`, { method: "PATCH", headers: { ...headers, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ status: "expired", updated_at: new Date().toISOString() }), cache: "no-store", signal: AbortSignal.timeout(7000) });
-    if (!expire.ok) throw new Error("Could not expire old licenses.");
+    if (!expire.ok) throw await supabaseDiagnostic(expire, "expiring old licenses");
     const [orders, subscriptions] = await Promise.all([
       db(`pro_orders?select=${SELECT}&order=created_at.desc&limit=1000`),
       db("pro_subscriptions?select=creem_subscription_id,customer_email,status,current_period_end,updated_at&order=updated_at.desc&limit=1000"),
     ]);
     return NextResponse.json({ orders: orders || [], subscriptions: subscriptions || [] }, { headers: { "Cache-Control": "no-store" } });
-  } catch { return NextResponse.json({ error: "Could not load payment records." }, { status: 502 }); }
+  } catch (error) { return NextResponse.json({ error: safeOrderActionDiagnostic(error) }, { status: 502 }); }
 }
 
 export async function POST(request: Request) {
@@ -84,14 +84,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ error: "Unknown order action." }, { status: 400 });
-  } catch {
-    return NextResponse.json({ error: "Order action failed. Check server storage and license configuration." }, { status: 502 });
+  } catch (error) {
+    return NextResponse.json({ error: safeOrderActionDiagnostic(error) }, { status: 502 });
   }
 }
 
 async function patchOrder(url: string, headers: Record<string, string>, id: string, patch: Record<string, unknown>) {
   const response = await fetch(`${url}/rest/v1/pro_orders?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { ...headers, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }), cache: "no-store", signal: AbortSignal.timeout(7000) });
-  if (!response.ok) throw new Error("Order update failed.");
+  if (!response.ok) throw await supabaseDiagnostic(response, "updating pro_orders");
 }
 
 function csvCell(value: unknown) {

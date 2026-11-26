@@ -13,10 +13,40 @@ const POLYGON_TOKENS: Record<CryptoAsset, string> = {
 };
 const TRON_USDT_HEX = "a614f803b6fd780986a42c78ec9c7f77e6ded13";
 
+export class SafeProOrderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SafeProOrderError";
+  }
+}
+
+function safeDiagnosticText(value: string) {
+  let safe = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/https?:\/\/\S+/gi, "[service endpoint]").replace(/\bBearer\s+\S+/gi, "Bearer [redacted]");
+  for (const secret of [process.env.SUPABASE_SERVICE_ROLE_KEY, process.env.CRYPTO_LICENSE_SECRET, process.env.CREEM_API_KEY, process.env.ADMIN_DASHBOARD_SECRET, process.env.ADMIN_SECRET]) {
+    if (secret) safe = safe.replaceAll(secret, "[redacted]");
+  }
+  return safe.replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+export async function supabaseDiagnostic(response: Response, operation: string) {
+  const body = await response.clone().json().catch(() => null);
+  const code = typeof body?.code === "string" && /^[A-Z0-9]{3,12}$/i.test(body.code) ? ` ${body.code}` : "";
+  const message = typeof body?.message === "string" ? safeDiagnosticText(body.message) : safeDiagnosticText(response.statusText || "No error detail returned");
+  return new SafeProOrderError(`Supabase ${operation} failed (HTTP ${response.status}${code}): ${message || "No error detail returned"}`);
+}
+
+export function safeOrderActionDiagnostic(error: unknown) {
+  if (error instanceof SafeProOrderError) return error.message;
+  return "Order action failed because a network or storage request could not complete. Check Supabase availability and server environment variables.";
+}
+
 export function ordersConfig() {
   const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Pro order storage is unavailable.");
+  if (!url || !key) {
+    const missing = [!url && "SUPABASE_URL", !key && "SUPABASE_SERVICE_ROLE_KEY"].filter(Boolean);
+    throw new SafeProOrderError(`Missing required server environment variable(s): ${missing.join(", ")}.`);
+  }
   return { url, headers: { apikey: key, Authorization: `Bearer ${key}` } };
 }
 
@@ -25,8 +55,8 @@ export function sha256(value: string) {
 }
 
 export function makeProLicense(orderId: string, expiresAt: string) {
-  const secret = process.env.CRYPTO_LICENSE_SECRET;
-  if (!secret || secret.length < 32) throw new Error("CRYPTO_LICENSE_SECRET must contain at least 32 characters.");
+  const secret = process.env.CRYPTO_LICENSE_SECRET?.trim();
+  if (!secret || secret.length < 32) throw new SafeProOrderError("CRYPTO_LICENSE_SECRET must contain at least 32 non-whitespace characters.");
   void expiresAt;
   const payload = Buffer.from(JSON.stringify({ id: orderId, n: randomBytes(10).toString("hex") })).toString("base64url");
   const signature = createHmac("sha256", secret).update(payload).digest("base64url");
@@ -35,7 +65,7 @@ export function makeProLicense(orderId: string, expiresAt: string) {
 }
 
 export async function verifyIssuedProLicense(key: string) {
-  const secret = process.env.CRYPTO_LICENSE_SECRET;
+  const secret = process.env.CRYPTO_LICENSE_SECRET?.trim();
   if (!secret || key.length > 512) return false;
   const parts = key.split(".");
   if (parts.length !== 3 || parts[0] !== "MLP") return false;
