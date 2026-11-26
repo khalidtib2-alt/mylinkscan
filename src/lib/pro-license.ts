@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { verifyIssuedProLicense } from "./pro-orders";
 
 export async function verifyProKey(headers: Headers): Promise<boolean> {
   const key = headers.get("x-pro-key")?.trim();
@@ -8,6 +9,7 @@ export async function verifyProKey(headers: Headers): Promise<boolean> {
   const digest = (value: string) => createHash("sha256").update(value).digest();
   const candidate = digest(key);
   if (configured.some((value) => timingSafeEqual(candidate, digest(value)))) return true;
+  if (await verifyIssuedProLicense(key)) return true;
 
   const creemApiKey = process.env.CREEM_API_KEY?.trim();
   if (creemApiKey) {

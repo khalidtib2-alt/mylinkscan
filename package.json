@@ -8,6 +8,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "test:shield-links": "node --test tests/shield-links.test.cjs tests/extension-pro.test.cjs",
+    "test:pro-payments": "node --test tests/pro-payments.test.cjs",
     "pack:extension": "node scripts/pack-extension.mjs"
   },
   "repository": {

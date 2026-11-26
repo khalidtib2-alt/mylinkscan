@@ -29,8 +29,17 @@ export default function ShieldLinksPage() {
   const [licenseInput, setLicenseInput] = useState("");
   const [licenseError, setLicenseError] = useState("");
   const [verifying, setVerifying] = useState(false);
+  const [cryptoPlan, setCryptoPlan] = useState<"month" | "year">("month");
+  const [cryptoNetwork, setCryptoNetwork] = useState<"polygon" | "tron">("polygon");
+  const [cryptoAsset, setCryptoAsset] = useState<"USDC" | "USDT">("USDC");
+  const [cryptoEmail, setCryptoEmail] = useState("");
+  const [txHash, setTxHash] = useState("");
+  const [cryptoBusy, setCryptoBusy] = useState(false);
+  const [cryptoMessage, setCryptoMessage] = useState("");
+  const [issuedKey, setIssuedKey] = useState("");
   const upgradeDialog = useRef<HTMLDialogElement>(null);
   const checkout = process.env.NEXT_PUBLIC_PRO_CHECKOUT_URL;
+  const cryptoWallet = cryptoNetwork === "polygon" ? process.env.NEXT_PUBLIC_CRYPTO_POLYGON_ADDRESS : process.env.NEXT_PUBLIC_CRYPTO_TRON_ADDRESS;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -61,6 +70,32 @@ export default function ShieldLinksPage() {
       setLicenseError("License verification is temporarily unavailable.");
     } finally {
       setVerifying(false);
+    }
+  }
+
+  async function submitCrypto(e: React.FormEvent) {
+    e.preventDefault();
+    setCryptoBusy(true);
+    setCryptoMessage("");
+    setIssuedKey("");
+    try {
+      const response = await fetch("/api/pro/crypto-verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cryptoEmail, network: cryptoNetwork, asset: cryptoAsset, plan: cryptoPlan, txHash }),
+      });
+      const data = await response.json();
+      if (!response.ok && response.status !== 422) throw new Error(data.error || "Could not submit the transaction.");
+      setCryptoMessage(data.message || data.error || "Order submitted.");
+      if (data.licenseKey) {
+        setIssuedKey(data.licenseKey);
+        setProKey(data.licenseKey);
+        try { localStorage.setItem(PRO_KEY, data.licenseKey); } catch {}
+      }
+    } catch (error) {
+      setCryptoMessage(error instanceof Error ? error.message : "Transaction submission failed.");
+    } finally {
+      setCryptoBusy(false);
     }
   }
 
@@ -187,19 +222,38 @@ export default function ShieldLinksPage() {
           </div>
         </section>
 
-        <dialog ref={upgradeDialog} aria-labelledby="pro-dialog-title" className="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 text-slate-100 backdrop:bg-black/70">
+        <dialog ref={upgradeDialog} aria-labelledby="pro-dialog-title" className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-6 text-slate-100 backdrop:bg-black/70">
           <div className="flex items-center justify-between gap-3">
             <h2 id="pro-dialog-title" className="text-lg font-bold">Activate Pro Key / Upgrade ($9/mo)</h2>
             <button type="button" className="text-sm text-slate-300" onClick={() => upgradeDialog.current?.close()}>Close</button>
           </div>
-          {checkout ? <a className="mt-3 inline-block font-semibold text-emerald-300 underline" href={checkout} target="_blank" rel="noopener noreferrer">Upgrade for $9/mo</a>
-            : <p className="mt-3 text-sm text-slate-300">Checkout coming soon — enter demo/pro key below.</p>}
+          {checkout ? <a className="mt-3 inline-block rounded-xl bg-emerald-400 px-4 py-3 font-bold text-slate-950" href={checkout} target="_blank" rel="noopener noreferrer">Pay with Card / Apple Pay (Creem)</a>
+            : <div className="mt-3"><button type="button" disabled className="rounded-xl bg-emerald-400/40 px-4 py-3 font-bold text-slate-950/70">Pay with Card / Apple Pay (Creem)</button><p className="mt-2 text-xs text-slate-400">Card checkout is not configured yet. You can activate a key or pay directly with crypto below.</p></div>}
           <form onSubmit={activate} className="mt-4 grid gap-2">
             <label htmlFor="pro-license">License key</label>
             <input id="pro-license" type="password" required maxLength={256} value={licenseInput} onChange={(e) => setLicenseInput(e.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2" />
             {licenseError && <p role="alert" className="text-sm text-rose-300">{licenseError}</p>}
             <button disabled={verifying} className="rounded-xl bg-emerald-500 px-4 py-2 font-semibold text-slate-950">{verifying ? "Verifying…" : "Activate Pro Key"}</button>
           </form>
+          <div className="my-5 flex items-center gap-3 text-xs text-slate-500"><span className="h-px flex-1 bg-slate-700" />OR PAY DIRECTLY<span className="h-px flex-1 bg-slate-700" /></div>
+          <section className="rounded-xl border border-slate-700 bg-slate-950/70 p-4">
+            <h3 className="font-bold text-white">Pay Direct with Crypto <span className="text-emerald-300">(USDC / USDT)</span></h3>
+            <p className="mt-1 text-xs text-amber-200">Network warning: only send the selected token on the selected network. Unsupported transfers may be unrecoverable.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="text-xs text-slate-300">Plan<select value={cryptoPlan} onChange={(e) => setCryptoPlan(e.target.value as "month" | "year")} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-sm"><option value="month">$9 / month</option><option value="year">$90 / year</option></select></label>
+              <label className="text-xs text-slate-300">Network<select value={cryptoNetwork} onChange={(e) => { const next = e.target.value as "polygon" | "tron"; setCryptoNetwork(next); setCryptoAsset(next === "tron" ? "USDT" : "USDC"); }} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-sm"><option value="polygon">Polygon PoS</option><option value="tron">Tron TRC-20</option></select></label>
+            </div>
+            <label className="mt-3 block text-xs text-slate-300">Token<select value={cryptoAsset} onChange={(e) => setCryptoAsset(e.target.value as "USDC" | "USDT")} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-sm">{cryptoNetwork === "polygon" ? <><option value="USDC">Native USDC</option><option value="USDT">USDT0 on Polygon</option></> : <><option value="USDT">USDT (TRC-20)</option><option value="USDC" disabled>USDC (legacy — unsupported)</option></>}</select></label>
+            {cryptoNetwork === "tron" && <p className="mt-2 text-xs text-slate-400">Circle discontinued USDC support on Tron. Use Tron USDT, or choose Polygon for native USDC.</p>}
+            <div className="mt-3 rounded-lg border border-slate-700 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs text-slate-400">Send to {cryptoNetwork === "polygon" ? "Polygon" : "Tron"} address</span>{cryptoWallet && <button type="button" onClick={() => copy(cryptoWallet, "crypto-wallet")} className="rounded bg-slate-800 px-2 py-1 text-xs text-emerald-200">{copied === "crypto-wallet" ? "Copied" : "Copy address"}</button>}</div><code className="mt-2 block break-all text-xs text-white">{cryptoWallet || "Wallet address is not configured yet."}</code></div>
+            <form onSubmit={submitCrypto} className="mt-3 grid gap-2">
+              <label className="text-xs text-slate-300" htmlFor="crypto-email">Customer email</label><input id="crypto-email" required type="email" value={cryptoEmail} onChange={(e) => setCryptoEmail(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm" placeholder="you@example.com" />
+              <label className="text-xs text-slate-300" htmlFor="crypto-txhash">Transaction Hash</label><input id="crypto-txhash" required value={txHash} onChange={(e) => setTxHash(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs" placeholder={cryptoNetwork === "polygon" ? "0x…" : "Tron transaction ID"} />
+              <button disabled={cryptoBusy || !cryptoWallet} className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-semibold disabled:opacity-50">{cryptoBusy ? "Checking transaction…" : "Submit transaction hash"}</button>
+            </form>
+            {cryptoMessage && <p role="status" className="mt-3 break-all text-sm text-amber-200">{cryptoMessage}</p>}
+            {issuedKey && <div className="mt-3 rounded-lg border border-emerald-800 bg-emerald-950/50 p-3"><p className="text-sm font-bold text-emerald-200">Your Pro key</p><code className="mt-2 block break-all text-xs">{issuedKey}</code><button type="button" onClick={() => copy(issuedKey, "issued-pro-key")} className="mt-2 rounded bg-emerald-500 px-3 py-1 text-xs font-bold text-slate-950">{copied === "issued-pro-key" ? "Copied" : "Copy key"}</button></div>}
+          </section>
         </dialog>
 
         <form onSubmit={onCreate} className="mt-6 grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
