@@ -9,6 +9,7 @@ export const trustLinks = [
   { href: "/terms", label: "Terms" },
   { href: "/extension", label: "Chrome Extension" },
   { href: "/bot-shield", label: "Bot Shield" },
+  { href: "/case-study", label: "Case Study" },
 ];
 
 export const scannerLinks = [
@@ -17,4 +18,5 @@ export const scannerLinks = [
   { href: "/extension", label: "Chrome Extension" },
   { href: "/bot-shield", label: "Bot Shield" },
   { href: "/shield-links", label: "Shield Links" },
+  { href: "/case-study", label: "Case Study" },
 ];

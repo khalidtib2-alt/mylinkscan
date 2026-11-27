@@ -10,6 +10,7 @@ type ShieldItem = {
   destinationUrl: string;
   humanClicks: number;
   blockedBots: number;
+  topZones?: { zoneId: string; humanHits: number; blockedBots: number; totalHits: number; botRate: number }[];
 };
 
 const KEY = "mylinkscan_shield_links_v1";
@@ -139,7 +140,7 @@ export default function ShieldLinksPage() {
       const latest = currentItems.current;
       if (signal) {
         save(latest.map((item) => item.slug === slug && item.manageToken === token
-          ? { ...item, humanClicks: data.humanClicks, blockedBots: data.blockedBots }
+          ? { ...item, humanClicks: data.humanClicks, blockedBots: data.blockedBots, topZones: data.topZones || [] }
           : item));
       } else {
         save([{ ...data, manageToken: token }, ...latest.filter((item) => item.slug !== slug)]);
@@ -222,6 +223,20 @@ export default function ShieldLinksPage() {
           </div>
         </section>
 
+        <section aria-labelledby="traffic-stack-title" className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-300">For media buyers</p>
+          <h2 id="traffic-stack-title" className="mt-1 text-lg font-bold text-white">Recommended Traffic &amp; Tracking Stack</h2>
+          <p className="mt-1 text-sm text-slate-400">Use a traffic source and tracker to compare placements, then route traffic through a Shield Link to measure human visits and blocked automation by zone.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {[
+              { name: "PopAds", role: "Pop traffic source", href: process.env.NEXT_PUBLIC_AFFILIATE_POPADS_URL || "https://www.popads.net/" },
+              { name: "BeMob", role: "Campaign tracker", href: process.env.NEXT_PUBLIC_AFFILIATE_BEMOB_URL || "https://bemob.com/" },
+              { name: "RedTrack", role: "Ad tracking platform", href: process.env.NEXT_PUBLIC_AFFILIATE_REDTRACK_URL || "https://www.redtrack.io/" },
+            ].map((tool) => <a key={tool.name} href={tool.href} target="_blank" rel="noopener noreferrer sponsored" className="rounded-xl border border-slate-700 bg-slate-950/70 p-4 transition hover:border-emerald-700"><span className="block font-semibold text-white">{tool.name}</span><span className="mt-1 block text-xs text-slate-400">{tool.role}</span><span className="mt-3 block text-xs text-emerald-300">Visit website →</span></a>)}
+          </div>
+          <p className="mt-3 text-xs text-slate-500">Affiliate disclosure: Some links may be tracked partner links. MyLinkscan may earn a commission if you sign up through one, at no extra cost to you.</p>
+        </section>
+
         <dialog ref={upgradeDialog} aria-labelledby="pro-dialog-title" className="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-6 text-slate-100 backdrop:bg-black/70">
           <div className="flex items-center justify-between gap-3">
             <h2 id="pro-dialog-title" className="text-lg font-bold">Activate Pro Key / Upgrade ($9/mo)</h2>
@@ -293,6 +308,10 @@ export default function ShieldLinksPage() {
                   <div className="text-2xl font-bold text-rose-400">{it.blockedBots}</div>
                 </div>
               </div>
+              <section aria-label={`Top zones for ${it.slug}`} className="mt-4 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                <h3 className="text-sm font-semibold text-white">Top Zones (Human vs. Bot %)</h3>
+                {it.topZones?.length ? <div className="mt-2 divide-y divide-slate-800">{it.topZones.map((zone) => <div key={zone.zoneId} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs"><span className="max-w-[50%] break-all font-mono text-slate-200">{zone.zoneId}</span><span className="text-emerald-300">{zone.humanHits} human</span><span className="text-rose-300">{zone.blockedBots} bot · {zone.botRate.toFixed(1)}%</span></div>)}</div> : <p className="mt-1 text-xs text-slate-500">No zone-tagged visits recorded yet. Add a `zone`, `website_id`, or sub-ID parameter to your Shield Link traffic.</p>}
+              </section>
             </div>
           ))}
         </div>

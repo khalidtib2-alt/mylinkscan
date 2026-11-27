@@ -13,8 +13,10 @@ require.extensions[".ts"] = (module, filename) => {
 };
 
 const { POST } = require("../src/app/api/shield-links/route.ts");
+const { GET: redirectShieldLink } = require("../src/app/go/[slug]/route.ts");
 const { GET: exportCsv } = require("../src/app/api/shield-links/[slug]/export/route.ts");
 const { validCustomSlug } = require("../src/lib/shield-links.ts");
+const { appendQueryParams, extractZoneId } = require("../src/lib/shield-link-analytics.ts");
 const { verifyProKey } = require("../src/lib/pro-license.ts");
 const site = "https://mylinkscan.com";
 
@@ -110,6 +112,54 @@ test("custom slugs enforce length, syntax, and reserved names", () => {
   }
 });
 
+test("Shield redirect appends incoming tracking parameters and records the prioritized zone", async (t) => {
+  const previousUrl = process.env.SUPABASE_URL;
+  const previousKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_URL = "https://db.example";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-secret";
+  t.after(() => {
+    mock.restoreAll();
+    previousUrl === undefined ? delete process.env.SUPABASE_URL : process.env.SUPABASE_URL = previousUrl;
+    previousKey === undefined ? delete process.env.SUPABASE_SERVICE_ROLE_KEY : process.env.SUPABASE_SERVICE_ROLE_KEY = previousKey;
+  });
+
+  let zoneCall;
+  mock.method(globalThis, "fetch", async (target, options = {}) => {
+    const url = String(target);
+    if (url.includes("/rest/v1/shield_links?") && !options.method) return Response.json([{ id: "link-uuid", destination_url: "https://offer.example/path?existing=keep&cid=destination", strict_mode: false, human_clicks: 0, blocked_bots: 0 }]);
+    if (url.includes("/rest/v1/shield_links?id=eq.")) return new Response(null, { status: 204 });
+    if (url.endsWith("/rest/v1/rpc/record_shield_link_zone_hit")) {
+      zoneCall = JSON.parse(options.body);
+      return new Response(null, { status: 404 }); // old deployments without the optional migration stay redirect-safe
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+
+  const request = new NextRequest(site + "/go/test-brand?zone=zone-2&website_id=website-1&cid=incoming&dup=one&dup=two", {
+    headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0", "accept-language": "en-US,en;q=0.9" },
+  });
+  const response = await redirectShieldLink(request, { params: Promise.resolve({ slug: "test-brand" }) });
+  assert.equal(response.status, 302);
+  const location = new URL(response.headers.get("location"));
+  assert.equal(location.origin + location.pathname, "https://offer.example/path");
+  assert.equal(location.searchParams.get("existing"), "keep");
+  assert.equal(location.searchParams.getAll("cid").join(","), "destination,incoming");
+  assert.deepEqual(location.searchParams.getAll("dup"), ["one", "two"]);
+  assert.equal(location.searchParams.get("zone"), "zone-2");
+  assert.equal(location.searchParams.get("website_id"), "website-1");
+  assert.deepEqual(zoneCall, { p_shield_link_id: "link-uuid", p_zone_id: "website-1", p_is_bot: false });
+});
+
+test("Zone ID extraction follows the documented parameter priority and query merge appends duplicates", () => {
+  assert.equal(extractZoneId(new URLSearchParams("source=src&subid=sub&sub1=sub-one&zone_id=zone-id&zone=zone&website_id=site")), "site");
+  assert.equal(extractZoneId(new URLSearchParams("source=src&subid=sub&sub1=sub-one&zone_id=zone-id&zone=zone")), "zone");
+  assert.equal(extractZoneId(new URLSearchParams("subid=sub&source=src")), "sub");
+  assert.equal(extractZoneId(new URLSearchParams("cid=abc")), null);
+  const merged = new URL(appendQueryParams("https://offer.example/?cid=dest", new URLSearchParams("cid=source&zone=42")));
+  assert.deepEqual(merged.searchParams.getAll("cid"), ["dest", "source"]);
+  assert.equal(merged.searchParams.get("zone"), "42");
+});
+
 test("Shield Links route applies Free vs. Pro permissions and limits", async (t) => {
   process.env.SUPABASE_URL = "https://db.example";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-secret";
@@ -152,9 +202,10 @@ test("CSV route requires both credentials and exports current counters", async (
   t.after(() => mock.restoreAll());
   mock.method(globalThis, "fetch", async (target) => {
     const query = new URL(target).searchParams;
+    if (String(target).includes("/shield_link_zone_stats?")) return Response.json([{ zone_id: "zone-a", human_clicks: 3, blocked_bots: 2 }]);
     assert.equal(query.get("slug"), "eq.test-brand");
     return Response.json(query.get("manage_token") === "eq." + token
-      ? [{ slug: "test-brand", destination_url: "https://example.com/a,b", created_at: "2026-11-17T00:00:00Z", human_clicks: 3, blocked_bots: 1 }]
+      ? [{ id: "link-uuid", slug: "test-brand", destination_url: "https://example.com/a,b", created_at: "2026-11-17T00:00:00Z", human_clicks: 3, blocked_bots: 1 }]
       : []);
   });
   const url = site + "/api/shield-links/test-brand/export";
@@ -163,5 +214,7 @@ test("CSV route requires both credentials and exports current counters", async (
   assert.equal((await exportCsv(new Request(url, { headers: { "x-pro-key": "test-pro-key" } }), context)).status, 404);
   const result = await exportCsv(new Request(url, { headers: { "x-pro-key": "test-pro-key", "x-manage-token": token } }), context);
   assert.equal(result.status, 200);
-  assert.match(await result.text(), /"https:\/\/example.com\/a,b","2026-11-17T00:00:00Z","3","1","4","25.00%"/);
+  const csv = await result.text();
+  assert.match(csv, /"https:\/\/example.com\/a,b","2026-11-17T00:00:00Z","3","1","4","25.00%"/);
+  assert.match(csv, /Zone ID Breakdown\r\nzone_id,human_visits,blocked_bots,total_hits,bot_block_rate\r\n"zone-a","3","2","5","40\.00%"/);
 });

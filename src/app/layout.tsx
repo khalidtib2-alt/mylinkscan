@@ -30,7 +30,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               MyLinkscan
             </Link>
             <nav aria-label="Main navigation">
-              {scannerLinks.map(({ href, label }) => <a href={href} key={href}>{label}</a>)}
+              {scannerLinks.map(({ href, label }) => <a className={href === "/case-study" ? "case-study-nav-link" : undefined} href={href} key={href}>{label}</a>)}
               <Link href="/how-it-works">How It Works</Link>
             </nav>
           </div>
@@ -40,7 +40,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <div className="nav-wrap">
             <Link href="/" className="footer-brand">MyLinkscan</Link>
             <nav aria-label="Footer navigation">
-              {trustLinks.map(({ href, label }) => <Link href={href} key={href}>{label}</Link>)}
+              {trustLinks.map(({ href, label }) => <Link className={href === "/case-study" ? "case-study-nav-link" : undefined} href={href} key={href}>{label}</Link>)}
             </nav>
           </div>
         </footer>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import net from "node:net";
+import { appendQueryParams, extractZoneId } from "../../../lib/shield-link-analytics";
 
 const BOT_UA_REGEX =
   /(bot|crawl|spider|slurp|curl|wget|python|requests|aiohttp|httpx|scrapy|playwright|puppeteer|selenium|phantomjs|headless|node-fetch|axios|go-http-client|java\/|libwww|nikto|sqlmap|nmap|masscan|zgrab|censys|shodan)/i;
@@ -80,7 +81,7 @@ async function checkDatacenterAsn(ip: string): Promise<{ isDatacenter: boolean; 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2500);
   try {
-    const res = await fetch(`https://ipwho.is{encodeURIComponent(ip)}`, {
+    const res = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
       signal: controller.signal,
       cache: "no-store",
     });
@@ -201,6 +202,7 @@ export async function GET(
 
   const isBot = reasons.length > 0;
   const nowIso = new Date().toISOString();
+  const zoneId = extractZoneId(req.nextUrl.searchParams);
 
   // Update counter in Supabase
   const patchBody = isBot
@@ -217,6 +219,21 @@ export async function GET(
     body: JSON.stringify(patchBody),
   }).catch(() => {});
 
+  if (zoneId) {
+    await fetch(`${config.url}/rest/v1/rpc/record_shield_link_zone_hit`, {
+      method: "POST",
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${config.key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_shield_link_id: link.id, p_zone_id: zoneId, p_is_bot: isBot }),
+      cache: "no-store",
+    }).catch(() => {
+      // Keep redirects working when the optional zone analytics migration is not deployed yet.
+    });
+  }
+
   if (isBot) {
     return new NextResponse(blockedHtml(reasons), {
       status: 403,
@@ -227,7 +244,13 @@ export async function GET(
     });
   }
 
-  return NextResponse.redirect(link.destination_url, {
+  let destination: string;
+  try {
+    destination = appendQueryParams(link.destination_url, req.nextUrl.searchParams);
+  } catch {
+    return NextResponse.redirect(new URL("/shield-links", req.url), 302);
+  }
+  return NextResponse.redirect(destination, {
     status: 302,
     headers: {
       "Cache-Control": "no-store",

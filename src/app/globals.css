@@ -18,6 +18,8 @@ section, article { scroll-margin-top: 24px; }
 .brand-icon { width: 37px; height: 37px; }
 nav { display: flex; flex-wrap: wrap; gap: 10px 25px; font-size: 14px; color: #b1becb; }
 nav a:hover { color: #77edba; }
+.case-study-nav-link { opacity: .72; font-size: 12px; }
+.case-study-nav-link:hover { opacity: 1; }
 .hero { padding-top: clamp(42px, 7vw, 84px); }
 .hero-icon { width: 58px; height: 58px; }
 h1 { margin: 22px 0 14px; font-size: clamp(34px, 6vw, 66px); line-height: 1.06; letter-spacing: -.055em; font-weight: 780; }
