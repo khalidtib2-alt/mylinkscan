@@ -13,7 +13,8 @@ require.extensions[".ts"] = (module, filename) => {
 };
 
 const { POST } = require("../src/app/api/shield-links/route.ts");
-const { GET: redirectShieldLink } = require("../src/app/go/[slug]/route.ts");
+const goRoute = require("../src/app/go/[slug]/route.ts");
+const { GET: redirectShieldLink } = goRoute;
 const { GET: exportCsv } = require("../src/app/api/shield-links/[slug]/export/route.ts");
 const { validCustomSlug } = require("../src/lib/shield-links.ts");
 const { appendQueryParams, classifyShieldRequest, extractZoneId } = require("../src/lib/shield-link-analytics.ts");
@@ -127,7 +128,7 @@ test("Shield redirect appends incoming tracking parameters and records the prior
 
   mock.method(globalThis, "fetch", async (target, options = {}) => {
     const url = String(target);
-    if (url.includes("/rest/v1/shield_links?") && !options.method) return Response.json([{ id: "link-uuid", destination_url: "https://offer.example/path?existing=keep&cid=destination", strict_mode: false, human_clicks: 0, blocked_bots: 0 }]);
+    if (url.includes("/rest/v1/shield_links?") && !options.method) return Response.json([{ id: "link-uuid", slug: "test-brand", destination_url: "https://offer.example/path?existing=keep&cid=destination", strict_mode: false }]);
     throw new Error(`Unexpected fetch: ${url}`);
   });
 
@@ -144,6 +145,33 @@ test("Shield redirect appends incoming tracking parameters and records the prior
   assert.equal(location.searchParams.get("zone"), "zone-2");
   assert.equal(location.searchParams.get("website_id"), "website-1");
   assert.equal(response.headers.get("cache-control"), "no-store, no-cache, must-revalidate");
+});
+
+test("/go route is dynamic and blocks automation before slug lookup", async (t) => {
+  assert.equal(goRoute.dynamic, "force-dynamic");
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => { throw new Error("blocked bots must not need a database lookup"); });
+  for (const ua of ["curl/8.5.0", "python-requests/2.31", "Mozilla/5.0 HeadlessChrome/126.0", "Mozilla/5.0 Playwright"]) {
+    const request = new NextRequest(site + "/go/does-not-matter?test=1", { headers: { "user-agent": ua } });
+    const response = await redirectShieldLink(request, { params: Promise.resolve({ slug: "does-not-matter" }) });
+    assert.equal(response.status, 403, ua);
+    assert.match(await response.text(), /Automated Traffic Blocked by MyLinkscan/);
+  }
+  assert.equal(fetchMock.mock.callCount(), 0);
+  mock.restoreAll();
+});
+
+test("unknown human Shield Link slugs return 404 instead of redirecting to a page", async (t) => {
+  process.env.SUPABASE_URL = "https://db.example";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-secret";
+  t.after(() => mock.restoreAll());
+  mock.method(globalThis, "fetch", async (url) => {
+    assert.match(String(url), /^https:\/\/db\.example\/rest\/v1\/shield_links\?/);
+    return Response.json([]);
+  });
+  const request = new NextRequest(site + "/go/missing123?test=1", { headers: { "user-agent": "Mozilla/5.0 Chrome/126.0", "accept-language": "en-US" } });
+  const response = await redirectShieldLink(request, { params: Promise.resolve({ slug: "missing123" }) });
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get("location"), null);
 });
 
 test("Zone ID extraction follows the documented parameter priority and query merge appends duplicates", () => {

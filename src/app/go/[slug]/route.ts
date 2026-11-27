@@ -6,6 +6,8 @@ import { cacheShieldLink, cacheShieldLinkMiss, getCachedShieldLink, isCachedShie
 const REDIRECT_HEADERS = { "Cache-Control": "no-store, no-cache, must-revalidate" };
 const inFlightLookups = new Map<string, Promise<ShieldLinkRecord | null>>();
 
+export const dynamic = "force-dynamic";
+
 function getSupabaseConfig() {
   const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -59,22 +61,42 @@ function blockedHtml(reason: string): string {
 export async function GET(req: NextRequest, context: { params: Promise<{ slug: string }> }) {
   const { slug: rawSlug } = await context.params;
   const slug = (rawSlug || "").trim().toLowerCase();
-  const config = getSupabaseConfig();
-  if (!config || !/^[a-z0-9](?:[a-z0-9-]{1,30})[a-z0-9]$/.test(slug)) {
-    return NextResponse.redirect(new URL("/shield-links", req.url), { status: 302, headers: REDIRECT_HEADERS });
+  const decision = classifyShieldRequest(req.headers.get("user-agent") || "", req.headers.get("accept-language") || "");
+
+  if (decision.status === "blocked") {
+    try {
+      after(async () => {
+        if (!/^[a-z0-9](?:[a-z0-9-]{1,30})[a-z0-9]$/.test(slug)) return;
+        const config = getSupabaseConfig();
+        if (!config) return;
+        const link = await findShieldLink(slug, config);
+        if (link) await recordShieldHit({ shield_link_id: link.id, zone_id: extractZoneId(req.nextUrl.searchParams), status: decision.status, block_reason: decision.blockReason });
+      });
+    } catch {
+      // `after()` is unavailable outside a Next request context (for example in isolated unit tests).
+    }
+    return new NextResponse(blockedHtml(decision.blockReason || "automation_detected"), {
+      status: 403,
+      headers: { ...REDIRECT_HEADERS, "Content-Type": "text/html; charset=utf-8" },
+    });
   }
 
+  const config = getSupabaseConfig();
+  if (!/^[a-z0-9](?:[a-z0-9-]{1,30})[a-z0-9]$/.test(slug)) {
+    return new NextResponse("Not Found", { status: 404, headers: REDIRECT_HEADERS });
+  }
+  if (!config) return new NextResponse("Shield Link service unavailable", { status: 503, headers: REDIRECT_HEADERS });
+
   const link = await findShieldLink(slug, config);
-  if (!link) return NextResponse.redirect(new URL("/shield-links", req.url), { status: 302, headers: REDIRECT_HEADERS });
+  if (!link) return new NextResponse("Shield Link not found", { status: 404, headers: REDIRECT_HEADERS });
 
   let finalUrl: string;
   try {
     finalUrl = appendQueryParams(link.destination_url, req.nextUrl.searchParams);
   } catch {
-    return NextResponse.redirect(new URL("/shield-links", req.url), { status: 302, headers: REDIRECT_HEADERS });
+    return new NextResponse("Invalid Shield Link destination", { status: 502, headers: REDIRECT_HEADERS });
   }
 
-  const decision = classifyShieldRequest(req.headers.get("user-agent") || "", req.headers.get("accept-language") || "");
   const cleanZoneId = extractZoneId(req.nextUrl.searchParams);
 
   // Analytics is queued after the response; traffic bursts are coalesced into REST RPC batches.
@@ -87,13 +109,6 @@ export async function GET(req: NextRequest, context: { params: Promise<{ slug: s
     }));
   } catch {
     // `after()` is unavailable outside a Next request context (for example in isolated unit tests).
-  }
-
-  if (decision.status === "blocked") {
-    return new NextResponse(blockedHtml(decision.blockReason || "automation_detected"), {
-      status: 403,
-      headers: { ...REDIRECT_HEADERS, "Content-Type": "text/html; charset=utf-8" },
-    });
   }
 
   const redirect = NextResponse.redirect(finalUrl, 302);
