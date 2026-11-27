@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import net from "node:net";
 import { verifyProKey } from "../../../lib/pro-license";
 import { findManagedLink, shieldConfig, validCustomSlug } from "../../../lib/shield-links";
+import { invalidateShieldLinkCache } from "../../../lib/shield-link-cache";
 
 const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "metadata.google.internal"]);
 
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (result !== "created") throw new Error("Unexpected insert result");
+      invalidateShieldLinkCache(slug);
       return NextResponse.json({ slug, shieldUrl: req.nextUrl.origin + "/go/" + slug, manageToken,
         destinationUrl: parsed.href, humanClicks: 0, blockedBots: 0 }, { headers: { "Cache-Control": "no-store" } });
     }

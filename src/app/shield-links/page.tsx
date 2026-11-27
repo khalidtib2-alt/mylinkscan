@@ -10,7 +10,8 @@ type ShieldItem = {
   destinationUrl: string;
   humanClicks: number;
   blockedBots: number;
-  topZones?: { zoneId: string; humanHits: number; blockedBots: number; totalHits: number; botRate: number }[];
+  topZones?: { zoneId: string; humanHits: number; blockedBots: number; totalHits: number; botRate: number; lastBlockReason?: string | null }[];
+  highBotZoneIds?: string[];
 };
 
 const KEY = "mylinkscan_shield_links_v1";
@@ -23,6 +24,7 @@ export default function ShieldLinksPage() {
   const [items, setItems] = useState<ShieldItem[]>([]);
   const currentItems = useRef<ShieldItem[]>([]);
   const [copied, setCopied] = useState("");
+  const [copyError, setCopyError] = useState("");
   const [sIn, setSIn] = useState("");
   const [tIn, setTIn] = useState("");
   const [customSlug, setCustomSlug] = useState("");
@@ -140,7 +142,7 @@ export default function ShieldLinksPage() {
       const latest = currentItems.current;
       if (signal) {
         save(latest.map((item) => item.slug === slug && item.manageToken === token
-          ? { ...item, humanClicks: data.humanClicks, blockedBots: data.blockedBots, topZones: data.topZones || [] }
+          ? { ...item, humanClicks: data.humanClicks, blockedBots: data.blockedBots, topZones: data.topZones || [], highBotZoneIds: data.highBotZoneIds || [] }
           : item));
       } else {
         save([{ ...data, manageToken: token }, ...latest.filter((item) => item.slug !== slug)]);
@@ -196,9 +198,11 @@ export default function ShieldLinksPage() {
   }
 
   function copy(val: string, id: string) {
-    navigator.clipboard?.writeText(val);
-    setCopied(id);
-    setTimeout(() => setCopied(""), 1500);
+    setCopyError("");
+    void navigator.clipboard?.writeText(val).then(() => {
+      setCopied(id);
+      setTimeout(() => setCopied(""), 1500);
+    }).catch(() => setCopyError("Clipboard access is unavailable in this browser."));
   }
 
   return (
@@ -309,8 +313,9 @@ export default function ShieldLinksPage() {
                 </div>
               </div>
               <section aria-label={`Top zones for ${it.slug}`} className="mt-4 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
-                <h3 className="text-sm font-semibold text-white">Top Zones (Human vs. Bot %)</h3>
-                {it.topZones?.length ? <div className="mt-2 divide-y divide-slate-800">{it.topZones.map((zone) => <div key={zone.zoneId} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs"><span className="max-w-[50%] break-all font-mono text-slate-200">{zone.zoneId}</span><span className="text-emerald-300">{zone.humanHits} human</span><span className="text-rose-300">{zone.blockedBots} bot · {zone.botRate.toFixed(1)}%</span></div>)}</div> : <p className="mt-1 text-xs text-slate-500">No zone-tagged visits recorded yet. Add a `zone`, `website_id`, or sub-ID parameter to your Shield Link traffic.</p>}
+                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-white">Top Traffic Zones (website_id)</h3><button type="button" disabled={!it.highBotZoneIds?.length} onClick={() => copy((it.highBotZoneIds || []).join(", "), "high-zones-" + it.slug)} className="rounded-lg border border-rose-900 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-200 disabled:cursor-not-allowed disabled:opacity-40">{copied === "high-zones-" + it.slug ? "Copied high-bot zones" : "Copy High-Bot Zones (>60% bots)"}</button></div>
+                {it.topZones?.length ? <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[500px] text-left text-xs"><thead className="text-slate-500"><tr><th className="py-2 pr-3 font-medium">Zone ID</th><th className="py-2 pr-3 font-medium">Total Hits</th><th className="py-2 pr-3 font-medium">Human Passed</th><th className="py-2 font-medium">Bots Blocked (%)</th></tr></thead><tbody className="divide-y divide-slate-800">{it.topZones.map((zone) => <tr key={zone.zoneId}><td className="max-w-44 break-all py-2 pr-3 font-mono text-slate-200">{zone.zoneId}</td><td className="py-2 pr-3">{zone.totalHits}</td><td className="py-2 pr-3 text-emerald-300">{zone.humanHits}</td><td className="py-2 text-rose-300">{zone.blockedBots} ({zone.botRate.toFixed(1)}%)</td></tr>)}</tbody></table>{it.topZones.some((zone) => zone.lastBlockReason) && <p className="mt-2 text-[11px] text-slate-500">Latest block signal: {it.topZones.find((zone) => zone.lastBlockReason)?.lastBlockReason?.replaceAll("_", " ")}</p>}</div> : <p className="mt-1 text-xs text-slate-500">No zone-tagged visits recorded yet. Add `website_id`, `zone_id`, `source_id`, or `subid` to your Shield Link traffic.</p>}
+                {copyError && <p role="status" className="mt-2 text-xs text-amber-300">{copyError}</p>}
               </section>
             </div>
           ))}

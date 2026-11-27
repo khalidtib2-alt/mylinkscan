@@ -12,7 +12,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     const total = link.humanClicks + link.blockedBots;
     const rate = total ? (100 * link.blockedBots / total).toFixed(2) : "0.00";
     const fields = [link.slug, link.destinationUrl, link.createdAt, link.humanClicks, link.blockedBots, total, rate + "%"];
-    const zoneRows = link.topZones.flatMap((zone) => {
+    const zoneRows = link.zoneBreakdown.flatMap((zone) => {
       const zoneRate = zone.totalHits ? (100 * zone.blockedBots / zone.totalHits).toFixed(2) + "%" : "0.00%";
       return [[zone.zoneId, zone.humanHits, zone.blockedBots, zone.totalHits, zoneRate]];
     });

@@ -1,259 +1,102 @@
-import { NextRequest, NextResponse } from "next/server";
-import net from "node:net";
-import { appendQueryParams, extractZoneId } from "../../../lib/shield-link-analytics";
+import { after, NextRequest, NextResponse } from "next/server";
+import { appendQueryParams, classifyShieldRequest, extractZoneId } from "../../../lib/shield-link-analytics";
+import { recordShieldHit } from "../../../lib/shield-hit-queue";
+import { cacheShieldLink, cacheShieldLinkMiss, getCachedShieldLink, isCachedShieldLinkMiss, type ShieldLinkRecord } from "../../../lib/shield-link-cache";
 
-const BOT_UA_REGEX =
-  /(bot|crawl|spider|slurp|curl|wget|python|requests|aiohttp|httpx|scrapy|playwright|puppeteer|selenium|phantomjs|headless|node-fetch|axios|go-http-client|java\/|libwww|nikto|sqlmap|nmap|masscan|zgrab|censys|shodan)/i;
-
-const DATACENTER_KEYWORDS = [
-  "amazon",
-  "aws",
-  "google cloud",
-  "google llc",
-  "microsoft",
-  "azure",
-  "digitalocean",
-  "hetzner",
-  "ovh",
-  "linode",
-  "akamai",
-  "vultr",
-  "alibaba",
-  "oracle",
-  "choopa",
-  "contabo",
-  "scaleway",
-  "hostinger",
-  "leaseweb",
-  "datacenter",
-  "data center",
-  "hosting",
-  "colocation",
-  "vps",
-];
+const REDIRECT_HEADERS = { "Cache-Control": "no-store, no-cache, must-revalidate" };
+const inFlightLookups = new Map<string, Promise<ShieldLinkRecord | null>>();
 
 function getSupabaseConfig() {
   const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
+  try {
+    if (new URL(url).protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
   return { url, key };
 }
 
-function extractClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first && net.isIP(first)) return first;
-  }
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  if (realIp && net.isIP(realIp)) return realIp;
-  return "";
-}
+async function findShieldLink(slug: string, config: { url: string; key: string }): Promise<ShieldLinkRecord | null> {
+  const cached = getCachedShieldLink(slug);
+  if (cached) return cached;
+  if (isCachedShieldLinkMiss(slug)) return null;
 
-function isPublicIp(ip: string): boolean {
-  const version = net.isIP(ip);
-  if (version === 4) {
-    const [a, b] = ip.split(".").map(Number);
-    if (a === 10 || a === 127 || a === 0) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a === 100 && b >= 64 && b <= 127) return false;
-    return true;
-  }
-  if (version === 6) {
-    const lower = ip.toLowerCase();
-    return !(
-      lower === "::1" ||
-      lower === "::" ||
-      lower.startsWith("fc") ||
-      lower.startsWith("fd") ||
-      lower.startsWith("fe80")
-    );
-  }
-  return false;
-}
+  const pending = inFlightLookups.get(slug);
+  if (pending) return pending;
+  if (inFlightLookups.size >= 100) return null;
 
-async function checkDatacenterAsn(ip: string): Promise<{ isDatacenter: boolean; org: string }> {
-  if (!ip || !isPublicIp(ip)) {
-    return { isDatacenter: false, org: "" };
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2500);
-  try {
-    const res = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, {
-      signal: controller.signal,
+  const lookup = (async () => {
+    const query = new URLSearchParams({ slug: `eq.${slug}`, select: "id,slug,destination_url,strict_mode", limit: "1" });
+    const response = await fetch(`${config.url}/rest/v1/shield_links?${query}`, {
+      headers: { apikey: config.key, Authorization: `Bearer ${config.key}` },
       cache: "no-store",
+      signal: AbortSignal.timeout(3000),
     });
-    if (!res.ok) return { isDatacenter: false, org: "" };
-    const data = (await res.json()) as {
-      success?: boolean;
-      connection?: { org?: string; isp?: string };
-    };
-    if (!data.success) return { isDatacenter: false, org: "" };
-    const combined = `${data.connection?.org || ""} ${data.connection?.isp || ""}`.trim();
-    const lower = combined.toLowerCase();
-    const matched = DATACENTER_KEYWORDS.some((kw) => lower.includes(kw));
-    return { isDatacenter: matched, org: combined };
+    if (!response.ok) return null;
+    const rows = await response.json() as ShieldLinkRecord[];
+    const link = rows[0] ?? null;
+    if (link) cacheShieldLink(link);
+    else cacheShieldLinkMiss(slug);
+    return link;
+  })();
+  inFlightLookups.set(slug, lookup);
+  try {
+    return await lookup;
   } catch {
-    return { isDatacenter: false, org: "" };
+    return null;
   } finally {
-    clearTimeout(timer);
+    if (inFlightLookups.get(slug) === lookup) inFlightLookups.delete(slug);
   }
 }
 
-function blockedHtml(reasons: string[]): string {
-  const safeReasons = reasons
-    .map((r) => `<li>${r.replace(/[<>&"]/g, "")}</li>`)
-    .join("");
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="robots" content="noindex,nofollow" />
-  <title>Automated Traffic Blocked — MyLinkscan Bot Shield</title>
-  <style>
-    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #020617; color: #f8fafc; display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; }
-    .card { max-width: 520px; width: 100%; background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 32px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-    .badge { display: inline-block; background: rgba(244,63,94,0.15); color: #fb7185; border: 1px solid rgba(244,63,94,0.35); padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
-    h1 { font-size: 22px; margin: 16px 0 8px; }
-    p { color: #94a3b8; font-size: 14px; line-height: 1.6; }
-    ul { color: #cbd5e1; font-size: 13px; background: #020617; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px 14px 32px; margin: 16px 0; }
-    a { color: #34d399; text-decoration: none; font-size: 13px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <span class="badge">403 · Access Filtered</span>
-    <h1>Automated or Non-Human Traffic Blocked</h1>
-    <p>This destination is protected by <strong>MyLinkscan Bot Shield</strong>. Your request was flagged before reaching the target site.</p>
-    <ul>${safeReasons}</ul>
-    <a href="/shield-links">Protected by MyLinkscan Bot Shield →</a>
-  </div>
-</body>
-</html>`;
+function blockedHtml(reason: string): string {
+  const label = reason.replace(/_/g, " ").replace(/[<>&"]/g, "");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Automated Traffic Blocked - MyLinkscan</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#020617;color:#f8fafc;font:15px system-ui}.card{max-width:520px;padding:32px;border:1px solid #1e293b;border-radius:16px;background:#0f172a}h1{font-size:22px}p{color:#94a3b8;line-height:1.6}a{color:#34d399}</style></head><body><main class="card"><h1>Automated Traffic Blocked by MyLinkscan</h1><p>This Shield Link filtered the request before it reached the destination.</p><p>Signal: ${label}</p><a href="/shield-links">Protected by MyLinkscan Bot Shield</a></main></body></html>`;
 }
 
-export async function GET(
-  req: NextRequest,
-  context: { params: Promise<{ slug: string }> }
-) {
+export async function GET(req: NextRequest, context: { params: Promise<{ slug: string }> }) {
   const { slug: rawSlug } = await context.params;
   const slug = (rawSlug || "").trim().toLowerCase();
-
   const config = getSupabaseConfig();
-  if (!config || !slug) {
-    return NextResponse.redirect(new URL("/shield-links", req.url), 302);
+  if (!config || !/^[a-z0-9](?:[a-z0-9-]{1,30})[a-z0-9]$/.test(slug)) {
+    return NextResponse.redirect(new URL("/shield-links", req.url), { status: 302, headers: REDIRECT_HEADERS });
   }
 
-  const query = new URLSearchParams({
-    slug: `eq.${slug}`,
-    select: "id,destination_url,strict_mode,human_clicks,blocked_bots",
-    limit: "1",
-  });
+  const link = await findShieldLink(slug, config);
+  if (!link) return NextResponse.redirect(new URL("/shield-links", req.url), { status: 302, headers: REDIRECT_HEADERS });
 
-  const lookupRes = await fetch(`${config.url}/rest/v1/shield_links?${query.toString()}`, {
-    headers: {
-      apikey: config.key,
-      Authorization: `Bearer ${config.key}`,
-    },
-    cache: "no-store",
-  });
-
-  if (!lookupRes.ok) {
-    return NextResponse.redirect(new URL("/shield-links", req.url), 302);
-  }
-
-  const rows = (await lookupRes.json()) as Array<{
-    id: string;
-    destination_url: string;
-    strict_mode: boolean;
-    human_clicks: number;
-    blocked_bots: number;
-  }>;
-
-  if (!rows.length) {
-    return NextResponse.redirect(new URL("/shield-links", req.url), 302);
-  }
-
-  const link = rows[0];
-  const ua = (req.headers.get("user-agent") || "").trim();
-  const acceptLang = (req.headers.get("accept-language") || "").trim();
-  const reasons: string[] = [];
-
-  if (!ua || ua.length < 12) {
-    reasons.push("Missing or abnormally short browser User-Agent header");
-  } else if (BOT_UA_REGEX.test(ua)) {
-    reasons.push("Automated scraper, CLI tool, or headless bot User-Agent signature");
-  }
-
-  if (!acceptLang) {
-    reasons.push("Missing standard browser Accept-Language header");
-  }
-
-  const ip = extractClientIp(req);
-  if (ip) {
-    const asnCheck = await checkDatacenterAsn(ip);
-    if (asnCheck.isDatacenter) {
-      reasons.push(`Cloud / datacenter network detected (${asnCheck.org || "Hosting ASN"})`);
-    }
-  }
-
-  const isBot = reasons.length > 0;
-  const nowIso = new Date().toISOString();
-  const zoneId = extractZoneId(req.nextUrl.searchParams);
-
-  // Update counter in Supabase
-  const patchBody = isBot
-    ? { blocked_bots: Number(link.blocked_bots || 0) + 1, last_event_at: nowIso }
-    : { human_clicks: Number(link.human_clicks || 0) + 1, last_event_at: nowIso };
-
-  await fetch(`${config.url}/rest/v1/shield_links?id=eq.${encodeURIComponent(link.id)}`, {
-    method: "PATCH",
-    headers: {
-      apikey: config.key,
-      Authorization: `Bearer ${config.key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(patchBody),
-  }).catch(() => {});
-
-  if (zoneId) {
-    await fetch(`${config.url}/rest/v1/rpc/record_shield_link_zone_hit`, {
-      method: "POST",
-      headers: {
-        apikey: config.key,
-        Authorization: `Bearer ${config.key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ p_shield_link_id: link.id, p_zone_id: zoneId, p_is_bot: isBot }),
-      cache: "no-store",
-    }).catch(() => {
-      // Keep redirects working when the optional zone analytics migration is not deployed yet.
-    });
-  }
-
-  if (isBot) {
-    return new NextResponse(blockedHtml(reasons), {
-      status: 403,
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    });
-  }
-
-  let destination: string;
+  let finalUrl: string;
   try {
-    destination = appendQueryParams(link.destination_url, req.nextUrl.searchParams);
+    finalUrl = appendQueryParams(link.destination_url, req.nextUrl.searchParams);
   } catch {
-    return NextResponse.redirect(new URL("/shield-links", req.url), 302);
+    return NextResponse.redirect(new URL("/shield-links", req.url), { status: 302, headers: REDIRECT_HEADERS });
   }
-  return NextResponse.redirect(destination, {
-    status: 302,
-    headers: {
-      "Cache-Control": "no-store",
-    },
-  });
+
+  const decision = classifyShieldRequest(req.headers.get("user-agent") || "", req.headers.get("accept-language") || "");
+  const cleanZoneId = extractZoneId(req.nextUrl.searchParams);
+
+  // Analytics is queued after the response; traffic bursts are coalesced into REST RPC batches.
+  try {
+    after(() => recordShieldHit({
+      shield_link_id: link.id,
+      zone_id: cleanZoneId,
+      status: decision.status,
+      block_reason: decision.blockReason,
+    }));
+  } catch {
+    // `after()` is unavailable outside a Next request context (for example in isolated unit tests).
+  }
+
+  if (decision.status === "blocked") {
+    return new NextResponse(blockedHtml(decision.blockReason || "automation_detected"), {
+      status: 403,
+      headers: { ...REDIRECT_HEADERS, "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
+
+  const redirect = NextResponse.redirect(finalUrl, 302);
+  redirect.headers.set("Cache-Control", REDIRECT_HEADERS["Cache-Control"]);
+  return redirect;
 }

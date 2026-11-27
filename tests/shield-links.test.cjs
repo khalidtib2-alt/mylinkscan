@@ -16,7 +16,9 @@ const { POST } = require("../src/app/api/shield-links/route.ts");
 const { GET: redirectShieldLink } = require("../src/app/go/[slug]/route.ts");
 const { GET: exportCsv } = require("../src/app/api/shield-links/[slug]/export/route.ts");
 const { validCustomSlug } = require("../src/lib/shield-links.ts");
-const { appendQueryParams, extractZoneId } = require("../src/lib/shield-link-analytics.ts");
+const { appendQueryParams, classifyShieldRequest, extractZoneId } = require("../src/lib/shield-link-analytics.ts");
+const { cacheShieldLink, getCachedShieldLink, invalidateShieldLinkCache } = require("../src/lib/shield-link-cache.ts");
+const { recordShieldHit } = require("../src/lib/shield-hit-queue.ts");
 const { verifyProKey } = require("../src/lib/pro-license.ts");
 const site = "https://mylinkscan.com";
 
@@ -123,15 +125,9 @@ test("Shield redirect appends incoming tracking parameters and records the prior
     previousKey === undefined ? delete process.env.SUPABASE_SERVICE_ROLE_KEY : process.env.SUPABASE_SERVICE_ROLE_KEY = previousKey;
   });
 
-  let zoneCall;
   mock.method(globalThis, "fetch", async (target, options = {}) => {
     const url = String(target);
     if (url.includes("/rest/v1/shield_links?") && !options.method) return Response.json([{ id: "link-uuid", destination_url: "https://offer.example/path?existing=keep&cid=destination", strict_mode: false, human_clicks: 0, blocked_bots: 0 }]);
-    if (url.includes("/rest/v1/shield_links?id=eq.")) return new Response(null, { status: 204 });
-    if (url.endsWith("/rest/v1/rpc/record_shield_link_zone_hit")) {
-      zoneCall = JSON.parse(options.body);
-      return new Response(null, { status: 404 }); // old deployments without the optional migration stay redirect-safe
-    }
     throw new Error(`Unexpected fetch: ${url}`);
   });
 
@@ -147,17 +143,53 @@ test("Shield redirect appends incoming tracking parameters and records the prior
   assert.deepEqual(location.searchParams.getAll("dup"), ["one", "two"]);
   assert.equal(location.searchParams.get("zone"), "zone-2");
   assert.equal(location.searchParams.get("website_id"), "website-1");
-  assert.deepEqual(zoneCall, { p_shield_link_id: "link-uuid", p_zone_id: "website-1", p_is_bot: false });
+  assert.equal(response.headers.get("cache-control"), "no-store, no-cache, must-revalidate");
 });
 
 test("Zone ID extraction follows the documented parameter priority and query merge appends duplicates", () => {
   assert.equal(extractZoneId(new URLSearchParams("source=src&subid=sub&sub1=sub-one&zone_id=zone-id&zone=zone&website_id=site")), "site");
-  assert.equal(extractZoneId(new URLSearchParams("source=src&subid=sub&sub1=sub-one&zone_id=zone-id&zone=zone")), "zone");
-  assert.equal(extractZoneId(new URLSearchParams("subid=sub&source=src")), "sub");
+  assert.equal(extractZoneId(new URLSearchParams("source_id=source-id&subid=sub&zone_id=zone-id&zone=zone")), "zone-id");
+  assert.equal(extractZoneId(new URLSearchParams("source_id=src-id&subid=sub")), "src-id");
   assert.equal(extractZoneId(new URLSearchParams("cid=abc")), null);
   const merged = new URL(appendQueryParams("https://offer.example/?cid=dest", new URLSearchParams("cid=source&zone=42")));
   assert.deepEqual(merged.searchParams.getAll("cid"), ["dest", "source"]);
   assert.equal(merged.searchParams.get("zone"), "42");
+  const encoded = new URL(appendQueryParams("https://offer.example/path?foo=bar", new URLSearchParams("value=hello%20world%26x")));
+  assert.equal(encoded.searchParams.get("foo"), "bar");
+  assert.equal(encoded.searchParams.get("value"), "hello world&x");
+  assert.equal(appendQueryParams("https://offer.example/path?foo=bar", new URLSearchParams()), "https://offer.example/path?foo=bar");
+});
+
+test("bot signals are classified and slug cache supports reuse plus invalidation", () => {
+  assert.deepEqual(classifyShieldRequest("", "en"), { status: "blocked", blockReason: "missing_user_agent" });
+  assert.deepEqual(classifyShieldRequest("Mozilla/5.0 HeadlessChrome/126.0", "en"), { status: "blocked", blockReason: "automation_user_agent" });
+  assert.deepEqual(classifyShieldRequest("Mozilla/5.0 Chrome/126.0", ""), { status: "blocked", blockReason: "missing_accept_language" });
+  assert.deepEqual(classifyShieldRequest("Mozilla/5.0 Chrome/126.0", "en-US"), { status: "allowed", blockReason: null });
+  const record = { id: "cache-id", slug: "cache-test", destination_url: "https://example.com", strict_mode: false };
+  cacheShieldLink(record);
+  assert.deepEqual(getCachedShieldLink("cache-test"), record);
+  invalidateShieldLinkCache("cache-test");
+  assert.equal(getCachedShieldLink("cache-test"), null);
+});
+
+test("hit analytics coalesces repeats into one Supabase REST RPC batch", async (t) => {
+  const oldUrl = process.env.SUPABASE_URL;
+  const oldKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_URL = "https://db.example";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-secret";
+  let body;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://db.example/rest/v1/rpc/record_shield_link_click_batch");
+    assert.equal(options.headers.apikey, "test-secret");
+    body = JSON.parse(options.body);
+    return new Response(null, { status: 204 });
+  });
+  t.after(() => {
+    oldUrl === undefined ? delete process.env.SUPABASE_URL : process.env.SUPABASE_URL = oldUrl;
+    oldKey === undefined ? delete process.env.SUPABASE_SERVICE_ROLE_KEY : process.env.SUPABASE_SERVICE_ROLE_KEY = oldKey;
+  });
+  await Promise.all([1, 2, 3].map(() => recordShieldHit({ shield_link_id: "link-uuid", zone_id: "zone-a", status: "blocked", block_reason: "automation_user_agent" })));
+  assert.deepEqual(body.p_hits, [{ shield_link_id: "link-uuid", zone_id: "zone-a", status: "blocked", block_reason: "automation_user_agent", count: 3 }]);
 });
 
 test("Shield Links route applies Free vs. Pro permissions and limits", async (t) => {
