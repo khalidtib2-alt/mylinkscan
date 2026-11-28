@@ -25,6 +25,12 @@ export default function ShieldLinksPage() {
   const currentItems = useRef<ShieldItem[]>([]);
   const [copied, setCopied] = useState("");
   const [copyError, setCopyError] = useState("");
+  const [highlightedSlug, setHighlightedSlug] = useState("");
+  const [statsMessage, setStatsMessage] = useState("");
+  const [targetDrafts, setTargetDrafts] = useState<Record<string, string>>({});
+  const [savingTargetSlug, setSavingTargetSlug] = useState("");
+  const [targetMessages, setTargetMessages] = useState<Record<string, { text: string; error: boolean }>>({});
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [sIn, setSIn] = useState("");
   const [tIn, setTIn] = useState("");
   const [customSlug, setCustomSlug] = useState("");
@@ -132,13 +138,13 @@ export default function ShieldLinksPage() {
     } catch {}
   }, []);
 
-  const refresh = useCallback(async (slug: string, token: string, signal?: AbortSignal) => {
+  const refresh = useCallback(async (slug: string, token: string, signal?: AbortSignal): Promise<boolean> => {
     try {
       const params = new URLSearchParams({ slug, token });
       const response = await fetch("/api/shield-links?" + params, { cache: "no-store", signal });
-      if (!response.ok) return;
+      if (!response.ok) return false;
       const data = await response.json();
-      if (signal?.aborted) return;
+      if (signal?.aborted) return false;
       const latest = currentItems.current;
       if (signal) {
         save(latest.map((item) => item.slug === slug && item.manageToken === token
@@ -147,10 +153,59 @@ export default function ShieldLinksPage() {
       } else {
         save([{ ...data, manageToken: token }, ...latest.filter((item) => item.slug !== slug)]);
       }
+      return true;
     } catch {
       // Keep the last saved counts when the network is unavailable.
+      return false;
     }
   }, [save]);
+
+  async function loadStats(e: React.FormEvent) {
+    e.preventDefault();
+    const slug = sIn.trim();
+    const token = tIn.trim();
+    if (!slug || !token) return;
+    const alreadyDisplayed = currentItems.current.some((item) => item.slug === slug && item.manageToken === token);
+    setStatsMessage("");
+    const loaded = await refresh(slug, token);
+    if (!loaded) {
+      setStatsMessage("Could not load stats. Check the slug and manage token.");
+      return;
+    }
+    setStatsMessage(`Stats loaded for ${slug}.`);
+    if (!alreadyDisplayed) return;
+    setHighlightedSlug(slug);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightedSlug(""), 2600);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.getElementById("shield-link-" + slug)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }));
+  }
+
+  async function saveTarget(item: ShieldItem) {
+    const destinationUrl = (targetDrafts[item.slug] ?? item.destinationUrl).trim();
+    setSavingTargetSlug(item.slug);
+    setTargetMessages((current) => ({ ...current, [item.slug]: { text: "", error: false } }));
+    try {
+      const response = await fetch("/api/shield-links/" + encodeURIComponent(item.slug), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "x-manage-token": item.manageToken },
+        body: JSON.stringify({ destinationUrl }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not update the target URL.");
+      const nextItems = currentItems.current.map((current) => current.slug === item.slug
+        ? { ...current, destinationUrl: data.destinationUrl }
+        : current);
+      save(nextItems);
+      setTargetDrafts((current) => ({ ...current, [item.slug]: data.destinationUrl }));
+      setTargetMessages((current) => ({ ...current, [item.slug]: { text: "Target URL saved.", error: false } }));
+    } catch (error) {
+      setTargetMessages((current) => ({ ...current, [item.slug]: { text: error instanceof Error ? error.message : "Could not update the target URL.", error: true } }));
+    } finally {
+      setSavingTargetSlug("");
+    }
+  }
 
   useEffect(() => {
     try {
@@ -291,7 +346,7 @@ export default function ShieldLinksPage() {
 
         <div className="mt-8 space-y-4">
           {items.map((it) => (
-            <div key={it.slug} className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+            <div id={"shield-link-" + it.slug} key={it.slug} className={`rounded-2xl border bg-slate-900/60 p-5 transition-all duration-500 ${highlightedSlug === it.slug ? "border-emerald-400 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-950/40" : "border-slate-800"}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="break-all font-mono text-sm text-emerald-400">{it.shieldUrl}</span>
                 <div className="flex flex-wrap gap-2">
@@ -301,6 +356,11 @@ export default function ShieldLinksPage() {
                   <button onClick={() => void downloadCsv(it)} className="rounded-lg bg-slate-800 px-3 py-1 text-xs">Download CSV</button>
                 </div>
               </div>
+              <form onSubmit={(event) => { event.preventDefault(); void saveTarget(it); }} className="mt-4 grid gap-2 rounded-xl border border-slate-800 bg-slate-950/50 p-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                <label htmlFor={"target-url-" + it.slug} className="text-xs font-semibold text-slate-300">Edit Target URL<input id={"target-url-" + it.slug} type="url" required value={targetDrafts[it.slug] ?? it.destinationUrl} onChange={(event) => setTargetDrafts((current) => ({ ...current, [it.slug]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white" /></label>
+                <button disabled={savingTargetSlug === it.slug} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">{savingTargetSlug === it.slug ? "Saving..." : "Save Target"}</button>
+                {targetMessages[it.slug]?.text && <p role={targetMessages[it.slug].error ? "alert" : "status"} className={`text-xs sm:col-span-2 ${targetMessages[it.slug].error ? "text-rose-300" : "text-emerald-300"}`}>{targetMessages[it.slug].text}</p>}
+              </form>
               <p className="mt-1 truncate text-xs text-slate-400">Target: {it.destinationUrl} (Slug: {it.slug})</p>
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-emerald-500/10 p-3">
@@ -321,10 +381,11 @@ export default function ShieldLinksPage() {
           ))}
         </div>
 
-        <form onSubmit={(e) => { e.preventDefault(); if (sIn && tIn) refresh(sIn.trim(), tIn.trim()); }} className="mt-8 grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-5 sm:grid-cols-3">
+        <form onSubmit={loadStats} className="mt-8 grid gap-3 rounded-2xl border border-slate-800 bg-slate-900/40 p-5 sm:grid-cols-3">
           <input value={sIn} onChange={(e) => setSIn(e.target.value)} placeholder="Slug" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm" />
           <input value={tIn} onChange={(e) => setTIn(e.target.value)} placeholder="Manage Token" className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm" />
           <button className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-emerald-400">Load Stats</button>
+          {statsMessage && <p role="status" aria-live="polite" className="text-sm text-slate-300 sm:col-span-3">{statsMessage}</p>}
         </form>
         <ShieldLinksGuide />
       </main>

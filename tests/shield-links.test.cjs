@@ -13,6 +13,7 @@ require.extensions[".ts"] = (module, filename) => {
 };
 
 const { POST } = require("../src/app/api/shield-links/route.ts");
+const { PATCH: updateShieldLinkTarget } = require("../src/app/api/shield-links/[slug]/route.ts");
 const goRoute = require("../src/app/go/[slug]/route.ts");
 const { GET: redirectShieldLink } = goRoute;
 const { GET: exportCsv } = require("../src/app/api/shield-links/[slug]/export/route.ts");
@@ -172,6 +173,39 @@ test("unknown human Shield Link slugs return 404 instead of redirecting to a pag
   const response = await redirectShieldLink(request, { params: Promise.resolve({ slug: "missing123" }) });
   assert.equal(response.status, 404);
   assert.equal(response.headers.get("location"), null);
+});
+
+test("target URL edit uses the card's manage token and invalidates its redirect cache", async (t) => {
+  const previousUrl = process.env.SUPABASE_URL;
+  const previousKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_URL = "https://db.example";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "test-secret";
+  t.after(() => {
+    mock.restoreAll();
+    previousUrl === undefined ? delete process.env.SUPABASE_URL : process.env.SUPABASE_URL = previousUrl;
+    previousKey === undefined ? delete process.env.SUPABASE_SERVICE_ROLE_KEY : process.env.SUPABASE_SERVICE_ROLE_KEY = previousKey;
+  });
+
+  const token = "a".repeat(32);
+  cacheShieldLink({ id: "cached-link", slug: "editable-link", destination_url: "https://old.example", strict_mode: false });
+  mock.method(globalThis, "fetch", async (target, options) => {
+    assert.equal(options.method, "PATCH");
+    const requestUrl = new URL(target);
+    assert.equal(requestUrl.origin, "https://db.example");
+    assert.equal(requestUrl.pathname, "/rest/v1/shield_links");
+    assert.equal(requestUrl.searchParams.get("slug"), "eq.editable-link");
+    assert.equal(requestUrl.searchParams.get("manage_token"), "eq." + token);
+    assert.equal(JSON.parse(options.body).destination_url, "https://new.example/offer?cid=abc");
+    return Response.json([{ slug: "editable-link", destination_url: "https://new.example/offer?cid=abc" }]);
+  });
+
+  const response = await updateShieldLinkTarget(new Request(site + "/api/shield-links/editable-link", {
+    method: "PATCH", headers: { "Content-Type": "application/json", "x-manage-token": token },
+    body: JSON.stringify({ destinationUrl: "https://new.example/offer?cid=abc" }),
+  }), { params: Promise.resolve({ slug: "editable-link" }) });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { slug: "editable-link", destinationUrl: "https://new.example/offer?cid=abc" });
+  assert.equal(getCachedShieldLink("editable-link"), null);
 });
 
 test("Zone ID extraction follows the documented parameter priority and query merge appends duplicates", () => {
